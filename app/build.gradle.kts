@@ -3,8 +3,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.io.FileInputStream
 import java.util.Properties
-import java.io.FileInputStream
-import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -44,22 +42,26 @@ android {
         }
     }
 
-signingConfigs {
-        create("release") {
+    signingConfigs {
+        register("release") {
             val propertiesFile = rootProject.file("local.properties")
             if (propertiesFile.exists()) {
-                val properties = Properties()
-                val inputStream = FileInputStream(propertiesFile)
+                val properties = java.util.Properties()
+                val inputStream = java.io.FileInputStream(propertiesFile)
                 properties.load(inputStream)
                 inputStream.close()
 
-                val storeFilePath = properties.getProperty("storeFile")
-                if (storeFilePath != null) {
-                    storeFile = file(storeFilePath)
+                val path = properties.getProperty("storeFile")
+                val pwd = properties.getProperty("storePassword")
+                val alias = properties.getProperty("keyAlias")
+                val keyPwd = properties.getProperty("keyPassword")
+
+                if (path != null && pwd != null && alias != null && keyPwd != null) {
+                    storeFile = file(path)
+                    storePassword = pwd
+                    keyAlias = alias
+                    keyPassword = keyPwd
                 }
-                storePassword = properties.getProperty("storePassword")
-                keyAlias = properties.getProperty("keyAlias")
-                keyPassword = properties.getProperty("keyPassword")
             }
         }
     }
@@ -88,7 +90,7 @@ signingConfigs {
         buildConfig = true
     }
     sourceSets {
-        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
     }
     androidResources {
         generateLocaleConfig = true
