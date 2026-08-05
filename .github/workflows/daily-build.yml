@@ -128,10 +128,8 @@ jobs:
 
       - name: Prepare build files
         run: |
-          # 解码keystore
           echo "${{ secrets.KEY_BASE64 }}" | base64 -d > app/app.key
           
-          # 把签名信息写进环境变量，让 Gradle 读
           echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/app/app.key" >> $GITHUB_ENV
           echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
           echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
