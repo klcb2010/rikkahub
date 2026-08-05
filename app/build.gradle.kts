@@ -32,8 +32,6 @@ android {
 
     splits {
         abi {
-            // AppBundle tasks usually contain "bundle" in their name
-            //noinspection WrongGradleMethod
             val isBuildingBundle = gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
             isEnable = !isBuildingBundle
             reset()
@@ -42,11 +40,11 @@ android {
         }
     }
 
+    // signingConfigs 整个删了
 
     buildTypes {
         release {
-            // signingConfig 这行删掉，用默认debug签名
-            isMinifyEnabled = false  // 不上架就别混淆了，省得报错
+            isMinifyEnabled = false
             isShrinkResources = false
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
@@ -64,8 +62,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
     }
     androidResources {
         generateLocaleConfig = true
@@ -89,7 +85,7 @@ android {
         compilerOptions.optIn.add("kotlinx.coroutines.ExperimentalCoroutinesApi")
         compilerOptions.optIn.add("androidx.navigation3.runtime.ExperimentalNavigation3Api")
     }
-}
+} // 这个大括号是 android {} 的结尾，别多删别少删
 
 composeCompiler {
     stabilityConfigurationFiles.add(
