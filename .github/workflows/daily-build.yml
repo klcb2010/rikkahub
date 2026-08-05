@@ -125,16 +125,18 @@ jobs:
           echo "[OK] Added proguard keep rule"
 
           echo "=== Mod apply done ==="
-
       - name: Prepare build files
         run: |
+          # 解码keystore
           echo "${{ secrets.KEY_BASE64 }}" | base64 -d > app/app.key
           
-          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/app/app.key" >> $GITHUB_ENV
-          echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> $GITHUB_ENV
-          echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> $GITHUB_ENV
-          echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
-          echo "CI=true" >> $GITHUB_ENV
+          # 生成 local.properties，必须用绝对路径
+          cat > local.properties << EOF
+          storeFile=$GITHUB_WORKSPACE/app/app.key
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
+          EOF
 
 
 
