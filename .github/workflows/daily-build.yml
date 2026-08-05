@@ -76,6 +76,63 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
+      - name: Apply custom mods
+        run: |
+          echo "Start applying mods from /mod directory"
+          
+          # 1. 复制技能包到 assets
+          mkdir -p app/src/main/assets/skills
+          cp -r mod/skills/* app/src/main/assets/skills/ || true
+          echo "Skills copied to assets/skills/"
+          
+          # 2. 复制 BundledSkillInstaller.java 到源码目录
+          # 注意包名 me.rerere.rikkahub
+          mkdir -p app/src/main/java/me/rerere/rikkahub
+          cp mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/ || true
+          echo "BundledSkillInstaller.java copied"
+          
+          # 3. 修改 RikkaHubApp.kt，在 super.onCreate() 后插入安装调用
+          RIKKA_APP="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+          if [ -f "$RIKKA_APP" ]; then
+            # 避免重复插入
+            if ! grep -q "BundledSkillInstaller.install" "$RIKKA_APP"; then
+              sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$RIKKA_APP"
+              echo "Injected BundledSkillInstaller.install into RikkaHubApp.kt"
+            else
+              echo "BundledSkillInstaller.install already exists, skip"
+            fi
+          else
+            echo "Warning: RikkaHubApp.kt not found"
+          fi
+          
+          # 4. 修改 ChatService.kt，强制默认启用全部技能
+          # 找到 getEnabledSkills() 的第二个调用，把上面的 if 判断改成无条件执行
+          CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/data/ai/ChatService.kt"
+          if [ -f "$CHAT_SERVICE" ]; then
+            # 策略：找到 getEnabledSkills，然后往上找最近的 if/ when，把条件改为 true
+            # 这个正则把 `if (xxx) {` 替换成 `if (true) {`，只作用于 getEnabledSkills 上面5行内
+            awk '/getEnabledSkills\(\)/{n=NR} n && NR>=n-5 && NR<=n && /if \(/ {sub(/if \(.*\)/, "if (true)")} 1' "$CHAT_SERVICE" > "$CHAT_SERVICE.tmp" && mv "$CHAT_SERVICE.tmp" "$CHAT_SERVICE"
+            echo "Patched ChatService.kt to always load all skills"
+          else
+            echo "Warning: ChatService.kt not found"
+          fi
+          
+          # 5. 修改 SkillsToolsKt.kt，删除 contains 过滤逻辑
+          # 策略：删掉 `if (!xxx.contains(skill)) continue` 这种行
+          SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsToolsKt.kt"
+          if [ -f "$SKILLS_TOOLS" ]; then
+            sed -i '/\.contains(/d' "$SKILLS_TOOLS"
+            echo "Removed .contains filter in SkillsToolsKt.kt"
+          else
+            echo "Warning: SkillsToolsKt.kt not found"
+          fi
+          
+          # 6. 防止 R8 误删技能类
+          echo "-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }" >> app/proguard-rules.pro
+          echo "Added proguard rule for BundledSkillInstaller"
+          
+          echo "Mod apply done"
+
       - name: Prepare build files
         run: |
           # 解码base64编码的keystore文件
@@ -102,6 +159,8 @@ jobs:
           prerelease: true
           body: |
             自动每日构建（commit `${{ github.sha }}`）
-
-            > ⚠️ 开发版本，可能不稳定，仅供测试。
+            
+            Mod: 内置 /assets/skills 技能包，默认启用全部技能
+            
+            > ⚠ 开发版本，可能不稳定，仅供测试。
           files: app/build/outputs/apk/release/*.apk
