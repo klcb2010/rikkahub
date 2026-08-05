@@ -7,96 +7,153 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.io.IOException;
+import java.io.InputStream;
 
 public final class BundledSkillInstaller {
 
-    public static void copyDir(
-            AssetManager assetManager,
-            String str,
-            File file
-    ) throws IOException {
+    private static final String TAG = "BundledSkillInstaller";
+    private static final String PREF_NAME = "bundled_skills";
+    private static final String KEY_VERSION = "installed_version";
+    private static final int CURRENT_VERSION = 1;
 
-        String[] list = assetManager.list(str);
+    private static final String ASSET_SKILLS_DIR = "skills";
+    private static final String TARGET_DIR = "skills";
 
-        if (list != null && list.length != 0) {
-
-            if (!file.exists()) {
-                file.mkdirs();
-            }
-
-            for (String str2 : list) {
-                copyDir(
-                    assetManager,
-                    str + "/" + str2,
-                    new File(file, str2)
-                );
-            }
-
-            return;
-        }
-
-        if (file.exists()) {
-            return;
-        }
-
-        File parentFile = file.getParentFile();
-
-        if (parentFile != null) {
-            parentFile.mkdirs();
-        }
-
-        InputStream open = assetManager.open(str);
-        FileOutputStream fileOutputStream = new FileOutputStream(file);
-
-        byte[] bArr = new byte[8192];
-
-        while (true) {
-            int read = open.read(bArr);
-
-            if (read == -1) {
-                fileOutputStream.flush();
-                fileOutputStream.close();
-                open.close();
-                return;
-            }
-
-            fileOutputStream.write(bArr, 0, read);
-        }
+    private BundledSkillInstaller() {
     }
-
 
     public static void install(Context context) {
 
         try {
-
-            SharedPreferences sharedPreferences =
+            SharedPreferences prefs =
                     context.getSharedPreferences(
-                            "bundled_skills",
-                            0
+                            PREF_NAME,
+                            Context.MODE_PRIVATE
                     );
 
-            if (sharedPreferences.getInt("installed_version", 0) < 1) {
+            int installedVersion =
+                    prefs.getInt(KEY_VERSION, 0);
 
-                copyDir(
-                    context.getAssets(),
-                    "skills",
-                    new File(context.getFilesDir(), "skills")
-                );
-
-                sharedPreferences.edit()
-                        .putInt("installed_version", 1)
-                        .apply();
+            if (installedVersion >= CURRENT_VERSION) {
+                Log.d(TAG, "Skills already installed");
+                return;
             }
 
-        } catch (Throwable th) {
+            File target =
+                    new File(
+                            context.getFilesDir(),
+                            TARGET_DIR
+                    );
 
-            Log.e(
-                "BundledSkillInstaller",
-                "install failed",
-                th
+            if (!target.exists() && !target.mkdirs()) {
+                Log.e(TAG, "Cannot create target dir");
+                return;
+            }
+
+            copyAssets(
+                    context.getAssets(),
+                    ASSET_SKILLS_DIR,
+                    target
             );
+
+            prefs.edit()
+                    .putInt(KEY_VERSION, CURRENT_VERSION)
+                    .apply();
+
+            Log.i(TAG, "Skills installed");
+
+        } catch (Exception e) {
+            Log.e(TAG, "Install skills failed", e);
+        }
+    }
+
+
+    private static void copyAssets(
+            AssetManager assetManager,
+            String assetPath,
+            File targetDir
+    ) throws IOException {
+
+        String[] files =
+                assetManager.list(assetPath);
+
+        if (files == null) {
+            return;
+        }
+
+
+        // 文件
+        if (files.length == 0) {
+
+            copyFile(
+                    assetManager,
+                    assetPath,
+                    targetDir
+            );
+
+            return;
+        }
+
+
+        // 目录
+        File dir =
+                new File(
+                        targetDir,
+                        new File(assetPath).getName()
+                );
+
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+
+
+        for (String file : files) {
+
+            copyAssets(
+                    assetManager,
+                    assetPath + "/" + file,
+                    dir
+            );
+        }
+    }
+
+
+    private static void copyFile(
+            AssetManager assetManager,
+            String assetPath,
+            File targetDir
+    ) throws IOException {
+
+        File outFile =
+                new File(
+                        targetDir,
+                        new File(assetPath).getName()
+                );
+
+
+        try (
+                InputStream input =
+                        assetManager.open(assetPath);
+
+                FileOutputStream output =
+                        new FileOutputStream(outFile)
+        ) {
+
+            byte[] buffer = new byte[8192];
+
+            int length;
+
+            while ((length = input.read(buffer)) != -1) {
+
+                output.write(
+                        buffer,
+                        0,
+                        length
+                );
+            }
+
+            output.flush();
         }
     }
 }
