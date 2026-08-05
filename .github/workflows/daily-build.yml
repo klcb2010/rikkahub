@@ -134,10 +134,7 @@ jobs:
           # 写入签名配置到local.properties
           echo "${{ secrets.SIGNING_CONFIG }}" > local.properties
 
-          # 写入Google Services配置，关键：用 EOF 避免引号转义问题
-          cat > app/google-services.json << 'EOF'
-          ${{ secrets.GOOGLE_SERVICES_JSON }}
-          EOF
+
 
       - name: Gradle Build
         run: |
