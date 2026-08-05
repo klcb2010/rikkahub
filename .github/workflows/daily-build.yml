@@ -71,111 +71,113 @@ jobs:
       - name: Apply custom mods
         run: |
           set -e
-          echo "=== Applying mods from /mod ==="
+           echo "=== Applying custom mods ==="
 
-          # 0. 移除Firebase依赖和代码
-          echo "=== Removing Firebase ==="
+       # 1. 开启 R8 代码压缩与优化（实现 7 DEX 变 3 DEX）
+       # 定位到 build.gradle.kts 中的 release {} 块，将其中的 false 修改为 true
+           GRADLE_FILE="app/build.gradle.kts"
+          if [ -f "$GRADLE_FILE" ]; then
+        sed -i '/release {/,/}/s/isMinifyEnabled = false/isMinifyEnabled = true/' "$GRADLE_FILE"
+        sed -i '/release {/,/}/s/isShrinkResources = false/isShrinkResources = true/' "$GRADLE_FILE"
+        echo "[OK] Enabled R8 Minify & Shrink in app/build.gradle.kts"
+          else
+        echo "[Error] app/build.gradle.kts not found"
+        exit 1
+           fi
 
-          # 删 gradle 插件和依赖
-          sed -i '/id("com\.google\.gms\.google-services")/d' app/build.gradle.kts || true
-          sed -i '/libs\.firebase/d' app/build.gradle.kts || true
-          sed -i '/firebase/d' gradle/libs.versions.toml || true
-          sed -i '/google-services/d' gradle/libs.versions.toml || true
-          # 删根目录 build.gradle.kts 的插件声明
-          sed -i '/libs\.plugins\.google/d' build.gradle.kts || true
-          sed -i '/libs\.plugins\.firebase/d' build.gradle.kts || true
+      # 2. 修改 ChatService.kt：取消 enabledSkills 是否为空的检查，确保入口强制开启
+       # 将 "assistant.enabledSkills.isNotEmpty()" 直接替换为 "true"
+        CHAT_FILE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
+         if [ -f "$CHAT_FILE" ]; then
+         sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "$CHAT_FILE"
+      echo "[OK] Patched ChatService.kt: forced skill entry"
+         else
+             echo "[Error] ChatService.kt not found"
+         exit 1
+             fi
 
-          # 删 Kotlin 代码里的 import 和调用
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/Firebase/d' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} +
+    # 3. 修改 SkillsTools.kt：删除 filter 过滤，将所有已装技能赋予 available
+    # 将 "val available = allSkills.filter { it.name in enabledSkills }" 替换为 "val available = allSkills"
+       SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
+      if [ -f "$SKILL_TOOLS" ]; then
+       sed -i 's/val available = allSkills\.filter { it\.name in enabledSkills }/val available = allSkills/g' "$SKILL_TOOLS"
+      echo "[OK] Patched SkillsTools.kt: bypassed enabledSkills filter"
+       else
+       echo "[Error] SkillsTools.kt not found"
+          exit 1
+           fi
 
-          # 删 AppModule.kt 里 Firebase 的 single 定义
-          sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
-          sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+    # 4. 移除 Firebase (保持你原有的逻辑，删除 Firebase 依赖和代码)
+      echo "=== Removing Firebase ==="
+      sed -i '/id("com\.google\.gms\.google-services")/d' app/build.gradle.kts || true
+      sed -i '/libs\.firebase/d' app/build.gradle.kts || true
+      sed -i '/firebase/d' gradle/libs.versions.toml || true
+      sed -i '/google-services/d' gradle/libs.versions.toml || true
+      sed -i '/libs\.plugins\.google/d' build.gradle.kts || true
+      sed -i '/libs\.plugins\.firebase/d' build.gradle.kts || true
 
-          # 删 ViewModelModule 里 Firebase 和 analytics 注入
-          VIEWMODEL_MODULE="app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt"
+      find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
+      find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} +
+      find app/src/main/java -type f -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
+      find app/src/main/java -type f -name "*.kt" -exec sed -i '/Firebase/d' {} +
+      find app/src/main/java -type f -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} +
 
-          if [ -f "$VIEWMODEL_MODULE" ]; then
-           sed -i '/Firebase/d' "$VIEWMODEL_MODULE"
-           sed -i '/analytics\s*=/d' "$VIEWMODEL_MODULE"
-           echo "[OK] Removed Firebase analytics injection"
-          fi
+      sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+      sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
 
-          echo "[OK] Firebase removed"
+      VIEWMODEL_MODULE="app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt"
+      if [ -f "$VIEWMODEL_MODULE" ]; then
+      sed -i '/Firebase/d' "$VIEWMODEL_MODULE"
+      sed -i '/analytics\s*=/d' "$VIEWMODEL_MODULE"
+      echo "[OK] Removed Firebase analytics injection"
+      fi
+      echo "[OK] Firebase removed"
 
-          # 1. 技能包塞进 assets
-          mkdir -p app/src/main/assets/skills
-          if [ -d "mod/skills" ]; then
-            cp -r mod/skills/* app/src/main/assets/skills/
-            echo "[OK] Skills copied to assets/skills/"
-          fi
+     # 5. 技能包塞进 assets
+      mkdir -p app/src/main/assets/skills
+      if [ -d "mod/skills" ]; then
+      cp -r mod/skills/* app/src/main/assets/skills/
+      echo "[OK] Skills copied to assets/skills/"
+       fi
 
-          # 2. 复制 BundledSkillInstaller.java
-          INSTALLER_PATH="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
-          if [ -f "mod/BundledSkillInstaller.java" ]; then
-            mkdir -p app/src/main/java/me/rerere/rikkahub
-            cp mod/BundledSkillInstaller.java "$INSTALLER_PATH"
-            echo "[OK] BundledSkillInstaller.java copied"
-          fi
+     # 6. 复制 BundledSkillInstaller.java
+       INSTALLER_PATH="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
+      if [ -f "mod/BundledSkillInstaller.java" ]; then
+      mkdir -p app/src/main/java/me/rerere/rikkahub
+      cp mod/BundledSkillInstaller.java "$INSTALLER_PATH"
+      echo "[OK] BundledSkillInstaller.java copied"
+       fi
 
-          # 3. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
-          APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
-          if [ -f "$APP_FILE" ]; then
-            if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
-              sed -i '/super\.onCreate()/a \ me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
-              echo "[OK] Injected install() into RikkaHubApp.kt"
-            else
-              echo "[Skip] install() already exists in RikkaHubApp.kt"
-            fi
-          fi
+     # 7. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
+        APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+        if [ -f "$APP_FILE" ]; then
+        if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
+        sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
+        echo "[OK] Injected install() into RikkaHubApp.kt"
+        else
+        echo "[Skip] install() already exists in RikkaHubApp.kt"
+        fi
+      fi
 
-          # 4. 改 ChatService.kt: 强制默认启用全部技能
-          CHAT_FILE="app/src/main/java/me/rerere/rikkahub/data/ai/ChatService.kt"
-          if [ -f "$CHAT_FILE" ]; then
-            LINE_NUM=$(grep -n "getEnabledSkills()" "$CHAT_FILE" | sed -n '2p' | cut -d: -f1)
-            if [ -n "$LINE_NUM" ]; then
-              START=$((LINE_NUM - 10))
-              sed -i "${START},${LINE_NUM}s/if\s*(.*)/if (true)/" "$CHAT_FILE"
-              echo "[OK] Patched ChatService.kt at line ~$LINE_NUM to bypass skill check"
-            else
-              echo "[Warn] getEnabledSkills() not found twice in ChatService.kt"
-            fi
-          fi
+    # 8. 修复 baselineprofile 插件版本冲突并移除构建入口 (保持你原有的逻辑)
+      BASELINE_FILE="app/baselineprofile/build.gradle.kts"
+      if [ -f "$BASELINE_FILE" ]; then
+      sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
+      echo "[OK] Fixed baselineprofile com.android.test version"
+      fi
 
-          # 5. 改 SkillsToolsKt.kt: 删除 contains 过滤
-          SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsToolsKt.kt"
+      sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
+      sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
+      sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
+      sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
+      sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
 
-          if [ -f "$SKILL_TOOLS" ]; then
-            sed -i '/\.contains(/d' "$SKILL_TOOLS"
-            echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
-          fi
+    # 9. 防 R8 误删自定义类的 Keep 规则
+      echo -e "\n-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }" >> app/proguard-rules.pro
+      echo "-keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }" >> app/proguard-rules.pro
+      echo "[OK] Added proguard keep rules"
 
-          # 6. 修复 baselineprofile 插件版本冲突
-          BASELINE_FILE="app/baselineprofile/build.gradle.kts"
-
-          if [ -f "$BASELINE_FILE" ]; then
-            sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
-            echo "[OK] Fixed baselineprofile com.android.test version"
-          fi
-
-          # CI 不生成 baseline profile，移除构建入口
-          sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
-          sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
-          sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
-          sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
-          sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
-            echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
-    
-           
-          # 6. 防 R8 误删
-          echo -e "\n-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }" >> app/proguard-rules.pro
-          echo "[OK] Added proguard keep rule"
-
-          echo "=== Mod apply done ==="
+      echo "=== Mod apply done ==="
           echo "=== Checking Firebase leftovers ==="
           grep -R "Firebase\|analytics =" app/src/main/java || true
      
