@@ -140,17 +140,28 @@ jobs:
             fi
           fi
 
-          # 5. 改 SkillsToolsKt.kt: 删掉 contains 过滤
+          # 5. 改 SkillsToolsKt.kt: 删除 contains 过滤
           SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsToolsKt.kt"
+
           if [ -f "$SKILL_TOOLS" ]; then
             sed -i '/\.contains(/d' "$SKILL_TOOLS"
-            # 跳过 baselineprofile 模块（CI 只需要出 APK，不需要生成 profile）
-           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
-          # 同时把 app 模块里的 baselineProfile 依赖也去掉，避免引用不存在的模块
-           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
-           sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
-           sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
-           sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
+            echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
+          fi
+
+          # 6. 修复 baselineprofile 插件版本冲突
+          BASELINE_FILE="app/baselineprofile/build.gradle.kts"
+
+          if [ -f "$BASELINE_FILE" ]; then
+            sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
+            echo "[OK] Fixed baselineprofile com.android.test version"
+          fi
+
+          # CI 不生成 baseline profile，移除构建入口
+          sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
+          sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
+          sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
+          sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
+          sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
             echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
           fi
 
@@ -159,38 +170,7 @@ jobs:
           echo "[OK] Added proguard keep rule"
 
           echo "=== Mod apply done ==="
-      - name: Add fake google-services.json
-        run: |
-          cat > app/google-services.json << 'EOF'
-          {
-            "project_info": {
-              "project_number": "000000000000",
-              "project_id": "fake-rikkahub"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:000000000000:android:000000000000",
-                  "android_client_info": {
-                    "package_name": "me.rerere.rikkahub"
-                  }
-                },
-                "oauth_client": [],
-                "api_key": [
-                  {
-                    "current_key": "fake_api_key"
-                  }
-                ],
-                "services": {
-                  "appinvite_service": {
-                    "other_platform_oauth_client": []
-                  }
-                }
-              }
-            ],
-            "configuration_version": "1"
-          }
-          EOF
+
       - name: Build Release APK
         run: |
           chmod +x gradlew
