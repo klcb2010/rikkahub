@@ -74,6 +74,33 @@ jobs:
           set -e
           echo "=== Applying mods from /mod ==="
 
+          # 0. 移除Firebase依赖和代码
+          echo "=== Removing Firebase ==="
+
+          # 删 gradle 插件和依赖
+          sed -i '/id("com\.google\.gms\.google-services")/d' app/build.gradle.kts || true
+          sed -i '/libs\.firebase/d' app/build.gradle.kts || true
+          sed -i '/firebase/d' gradle/libs.versions.toml || true
+          sed -i '/google-services/d' gradle/libs.versions.toml || true
+
+          # 删 Kotlin 代码里的 import 和调用
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase\.analytics/d' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase\.crashlytics/d' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/Firebase/d' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} +
+
+          # 删 AppModule.kt 里 Firebase 的 single 定义
+          sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+          sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+
+          # 删 ViewModelModule 里注入 Firebase 的行
+          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+
+          echo "[OK] Firebase removed"
+
           # 1. 技能包塞进 assets
           mkdir -p app/src/main/assets/skills
           if [ -d "mod/skills" ]; then
@@ -92,7 +119,7 @@ jobs:
           # 3. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
           APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
           if [ -f "$APP_FILE" ]; then
-            if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
+            if! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
               sed -i '/super\.onCreate()/a \ me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
               echo "[OK] Injected install() into RikkaHubApp.kt"
             else
