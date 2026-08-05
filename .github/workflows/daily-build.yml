@@ -141,7 +141,7 @@ jobs:
       - name: Gradle Build
         run: |
           chmod +x gradlew
-         ./gradlew assembleRelease
+            ./gradlew assembleRelease
 
       - name: Publish nightly prerelease
         uses: softprops/action-gh-release@v2
