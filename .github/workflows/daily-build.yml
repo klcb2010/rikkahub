@@ -101,14 +101,10 @@ jobs:
           fi
 
           # 4. 改 ChatService.kt: 强制默认启用全部技能
-          # 逻辑：找到 getEnabledSkills()，把前面最近的 if 判断条件改成 true
-          # 对应你 smali 里 "第二个结果上方的跳转判断改为nop"
           CHAT_FILE="app/src/main/java/me/rerere/rikkahub/data/ai/ChatService.kt"
           if [ -f "$CHAT_FILE" ]; then
-            # 统计 getEnabledSkills 出现次数，取第二个
             LINE_NUM=$(grep -n "getEnabledSkills()" "$CHAT_FILE" | sed -n '2p' | cut -d: -f1)
             if [ -n "$LINE_NUM" ]; then
-              # 从这行往上 10 行内，把 if(xx) 换成 if(true)
               START=$((LINE_NUM - 10))
               sed -i "${START},${LINE_NUM}s/if\s*(.*)/if (true)/" "$CHAT_FILE"
               echo "[OK] Patched ChatService.kt at line ~$LINE_NUM to bypass skill check"
@@ -118,10 +114,8 @@ jobs:
           fi
 
           # 5. 改 SkillsToolsKt.kt: 删掉 contains 过滤
-          # 对应你 smali 里删掉 contains 到 add 之间的代码
           SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsToolsKt.kt"
           if [ -f "$SKILL_TOOLS" ]; then
-            # 删除所有.contains( 的行，最粗暴有效
             sed -i '/\.contains(/d' "$SKILL_TOOLS"
             echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
           fi
