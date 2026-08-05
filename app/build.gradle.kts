@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.io.FileInputStream
 import java.util.Properties
+import java.io.FileInputStream
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -42,20 +44,22 @@ android {
         }
     }
 
- signingConfigs {
+signingConfigs {
         create("release") {
-            val localProperties = java.util.Properties()
-            val localPropertiesFile = rootProject.file("local.properties")
-            if (localPropertiesFile.exists()) {
-                java.io.FileInputStream(localPropertiesFile).use { input ->
-                    localProperties.load(input)
+            val propertiesFile = rootProject.file("local.properties")
+            if (propertiesFile.exists()) {
+                val properties = Properties()
+                val inputStream = FileInputStream(propertiesFile)
+                properties.load(inputStream)
+                inputStream.close()
+
+                val storeFilePath = properties.getProperty("storeFile")
+                if (storeFilePath != null) {
+                    storeFile = file(storeFilePath)
                 }
-                localProperties.getProperty("storeFile")?.let { path ->
-                    storeFile = file(path)
-                }
-                storePassword = localProperties.getProperty("storePassword")
-                keyAlias = localProperties.getProperty("keyAlias")
-                keyPassword = localProperties.getProperty("keyPassword")
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
             }
         }
     }
@@ -84,7 +88,7 @@ android {
         buildConfig = true
     }
     sourceSets {
-        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
     androidResources {
         generateLocaleConfig = true
