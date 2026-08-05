@@ -42,7 +42,19 @@ android {
         }
     }
 
-
+  signingConfigs {
+        create("release") {
+            val localProperties = java.util.Properties()
+            val localPropertiesFile = rootProject.file("local.properties")
+            if (localPropertiesFile.exists()) {
+                localProperties.load(java.io.FileInputStream(localPropertiesFile))
+                storeFile = localProperties.getProperty("storeFile")?.let { file(it) }
+                storePassword = localProperties.getProperty("storePassword")
+                keyAlias = localProperties.getProperty("keyAlias")
+                keyPassword = localProperties.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("release")
