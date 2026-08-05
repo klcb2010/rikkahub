@@ -163,8 +163,8 @@ jobs:
           sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
           sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
             echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
-          fi
-
+    
+           
           # 6. 防 R8 误删
           echo -e "\n-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }" >> app/proguard-rules.pro
           echo "[OK] Added proguard keep rule"
