@@ -92,7 +92,7 @@ jobs:
           # 3. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
           APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
           if [ -f "$APP_FILE" ]; then
-            if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
+            if! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
               sed -i '/super\.onCreate()/a \ me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
               echo "[OK] Injected install() into RikkaHubApp.kt"
             else
@@ -125,25 +125,17 @@ jobs:
           echo "[OK] Added proguard keep rule"
 
           echo "=== Mod apply done ==="
-      - name: Prepare build files
-        run: |
-          # 解码keystore
-          echo "${{ secrets.KEY_BASE64 }}" | base64 -d > app/app.key
-          
-          # 生成 local.properties，必须用绝对路径
-          cat > local.properties << EOF
-          storeFile=$GITHUB_WORKSPACE/app/app.key
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
-          EOF
 
-
-
-      - name: Gradle Build
+      - name: Build Release APK
         run: |
           chmod +x gradlew
-            ./gradlew assembleRelease
+          ./gradlew assembleRelease
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: rikkahub-release
+          path: app/build/outputs/apk/release/app-release.apk
 
       - name: Publish nightly prerelease
         uses: softprops/action-gh-release@v2
