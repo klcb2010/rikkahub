@@ -144,6 +144,13 @@ jobs:
           SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsToolsKt.kt"
           if [ -f "$SKILL_TOOLS" ]; then
             sed -i '/\.contains(/d' "$SKILL_TOOLS"
+            # 跳过 baselineprofile 模块（CI 只需要出 APK，不需要生成 profile）
+           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
+          # 同时把 app 模块里的 baselineProfile 依赖也去掉，避免引用不存在的模块
+           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
+           sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
+           sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
+           sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
             echo "[OK] Removed.contains() filter in SkillsToolsKt.kt"
           fi
 
