@@ -128,7 +128,34 @@ jobs:
       - name: Add fake google-services.json
         run: |
           cat > app/google-services.json << 'EOF'
-          { "project_info": { "project_number": "0", "project_id": "fake-project" }, "client": [ { "client_info": { "mobilesdk_app_id": "1:0:android:0", "android_client_info": { "package_name": "me.rerere.rikkahub" } }, "api_key": [ { "current_key": "fake" } ] } ], "configuration_version": "1" }
+          {
+            "project_info": {
+              "project_number": "000000000000",
+              "project_id": "fake-rikkahub"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:000000000000:android:000000000000",
+                  "android_client_info": {
+                    "package_name": "me.rerere.rikkahub"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [
+                  {
+                    "current_key": "fake_api_key"
+                  }
+                ],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
           EOF
       - name: Build Release APK
         run: |
