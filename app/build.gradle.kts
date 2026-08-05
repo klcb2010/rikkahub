@@ -42,36 +42,12 @@ android {
         }
     }
 
-    signingConfigs {
-        register("release") {
-            val propertiesFile = rootProject.file("local.properties")
-            if (propertiesFile.exists()) {
-                val properties = java.util.Properties()
-                val inputStream = java.io.FileInputStream(propertiesFile)
-                properties.load(inputStream)
-                inputStream.close()
-
-                val path = properties.getProperty("storeFile")
-                val pwd = properties.getProperty("storePassword")
-                val alias = properties.getProperty("keyAlias")
-                val keyPwd = properties.getProperty("keyPassword")
-
-                if (path != null && pwd != null && alias != null && keyPwd != null) {
-                    storeFile = file(path)
-                    storePassword = pwd
-                    keyAlias = alias
-                    keyPassword = keyPwd
-                }
-            }
-        }
-    }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("release")
-            optimization {
-                enable = true
-            }
+            // signingConfig 这行删掉，用默认debug签名
+            isMinifyEnabled = false  // 不上架就别混淆了，省得报错
+            isShrinkResources = false
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
         }
@@ -89,8 +65,7 @@ android {
         compose = true
         buildConfig = true
     }
-    sourceSets {
-        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+
     }
     androidResources {
         generateLocaleConfig = true
