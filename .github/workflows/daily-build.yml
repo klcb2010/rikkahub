@@ -96,8 +96,14 @@ jobs:
           sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
 
-          # 删 ViewModelModule 里注入 Firebase 的行
-          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+          # 删 ViewModelModule 里 Firebase 和 analytics 注入
+          VIEWMODEL_MODULE="app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt"
+
+          if [ -f "$VIEWMODEL_MODULE" ]; then
+           sed -i '/Firebase/d' "$VIEWMODEL_MODULE"
+           sed -i '/analytics\s*=/d' "$VIEWMODEL_MODULE"
+           echo "[OK] Removed Firebase analytics injection"
+          fi
 
           echo "[OK] Firebase removed"
 
@@ -170,7 +176,9 @@ jobs:
           echo "[OK] Added proguard keep rule"
 
           echo "=== Mod apply done ==="
-
+          echo "=== Checking Firebase leftovers ==="
+          grep -R "Firebase\|analytics =" app/src/main/java || true
+     
       - name: Build Release APK
         run: |
           chmod +x gradlew
