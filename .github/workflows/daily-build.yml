@@ -68,7 +68,6 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-
       - name: Apply custom mods
         run: |
           set -e
@@ -82,11 +81,12 @@ jobs:
           sed -i '/libs\.firebase/d' app/build.gradle.kts || true
           sed -i '/firebase/d' gradle/libs.versions.toml || true
           sed -i '/google-services/d' gradle/libs.versions.toml || true
+          # 删根目录 build.gradle.kts 的插件声明
+          sed -i '/libs\.plugins\.google/d' build.gradle.kts || true
+          sed -i '/libs\.plugins\.firebase/d' build.gradle.kts || true
 
           # 删 Kotlin 代码里的 import 和调用
           find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase\.analytics/d' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase\.crashlytics/d' {} +
           find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} +
           find app/src/main/java -type f -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
           find app/src/main/java -type f -name "*.kt" -exec sed -i '/Firebase/d' {} +
@@ -119,7 +119,7 @@ jobs:
           # 3. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
           APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
           if [ -f "$APP_FILE" ]; then
-            if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
+            if! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
               sed -i '/super\.onCreate()/a \ me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
               echo "[OK] Injected install() into RikkaHubApp.kt"
             else
