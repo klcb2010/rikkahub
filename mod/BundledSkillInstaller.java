@@ -7,120 +7,57 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.io.InputStream;
 
 public final class BundledSkillInstaller {
 
     private static final String TAG = "BundledSkillInstaller";
-    private static final String PREF_NAME = "bundled_skills";
-    private static final String KEY_VERSION = "installed_version";
-    private static final int CURRENT_VERSION = 1;
 
-    private static final String ASSET_SKILLS_DIR = "skills";
-    private static final String TARGET_DIR = "skills";
-
-    private BundledSkillInstaller() {
-    }
-
-    public static void install(Context context) {
-    try {
-        File skillsDir = new File(context.getFilesDir(), "skills");
-
-        if (!skillsDir.exists()
-                || skillsDir.listFiles() == null
-                || skillsDir.listFiles().length == 0) {
-
-            copyDir(
-                context.getAssets(),
-                "skills",
-                skillsDir
-            );
-
-            Log.i(
-                "BundledSkillInstaller",
-                "skills copied: " + skillsDir
-            );
-        }
-
-    } catch (Throwable e) {
-        Log.e(
-            "BundledSkillInstaller",
-            "install failed",
-            e
-        );
-    }
-}
-
-    private static void copyAssets(
+    public static void copyDir(
             AssetManager assetManager,
-            String assetPath,
-            File targetDir
-    ) throws IOException {
+            String path,
+            File target
+    ) throws Exception {
 
-        String[] files =
-                assetManager.list(assetPath);
+        String[] files = assetManager.list(path);
 
-        if (files == null) {
-            return;
-        }
+        if (files != null && files.length > 0) {
 
+            if (!target.exists()) {
+                target.mkdirs();
+            }
 
-        // 文件
-        if (files.length == 0) {
-
-            copyFile(
-                    assetManager,
-                    assetPath,
-                    targetDir
-            );
+            for (String file : files) {
+                copyDir(
+                        assetManager,
+                        path + "/" + file,
+                        new File(target, file)
+                );
+            }
 
             return;
         }
 
 
-        // 目录
-        File dir =
-                new File(
-                        targetDir,
-                        new File(assetPath).getName()
-                );
-
-        if (!dir.exists()) {
-            dir.mkdirs();
+        // 文件存在则跳过
+        if (target.exists() && target.isFile()) {
+            return;
         }
 
 
-        for (String file : files) {
+        File parent = target.getParentFile();
 
-            copyAssets(
-                    assetManager,
-                    assetPath + "/" + file,
-                    dir
-            );
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs();
         }
-    }
-
-
-    private static void copyFile(
-            AssetManager assetManager,
-            String assetPath,
-            File targetDir
-    ) throws IOException {
-
-        File outFile =
-                new File(
-                        targetDir,
-                        new File(assetPath).getName()
-                );
 
 
         try (
                 InputStream input =
-                        assetManager.open(assetPath);
+                        assetManager.open(path);
 
                 FileOutputStream output =
-                        new FileOutputStream(outFile)
+                        new FileOutputStream(target)
         ) {
 
             byte[] buffer = new byte[8192];
@@ -128,15 +65,70 @@ public final class BundledSkillInstaller {
             int length;
 
             while ((length = input.read(buffer)) != -1) {
-
-                output.write(
-                        buffer,
-                        0,
-                        length
-                );
+                output.write(buffer, 0, length);
             }
 
             output.flush();
+        }
+    }
+
+
+
+    public static void install(Context context) {
+
+        try {
+
+            SharedPreferences sp =
+                    context.getSharedPreferences(
+                            "bundled_skills",
+                            Context.MODE_PRIVATE
+                    );
+
+
+            int version =
+                    sp.getInt("installed_version", 0);
+
+
+
+            if (version < 2) {
+
+
+                File skillDir =
+                        new File(
+                                context.getFilesDir(),
+                                "skills"
+                        );
+
+
+                copyDir(
+                        context.getAssets(),
+                        "skills",
+                        skillDir
+                );
+
+
+                sp.edit()
+                        .putInt(
+                                "installed_version",
+                                2
+                        )
+                        .apply();
+
+
+                Log.i(
+                        TAG,
+                        "skills installed"
+                );
+            }
+
+
+        } catch (Throwable e) {
+
+            Log.e(
+                    TAG,
+                    "install failed",
+                    e
+            );
         }
     }
 }
