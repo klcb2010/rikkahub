@@ -286,143 +286,286 @@ jobs:
             echo "[OK] Assistant fallback restored"
           fi
 
-          echo "=== 5. Copy Builtin Skills & Installer ==="
-          # 复制 skills 包和安装器到对应资产目录
+                    echo "=== 5. Copy Builtin Skills & Installer ==="
+
           mkdir -p app/src/main/assets/skills
-          [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/ || true
+
+          if [ -d "mod/skills" ]; then
+            cp -rf mod/skills/* app/src/main/assets/skills/
+            echo "[OK] skills copied"
+            find app/src/main/assets/skills -maxdepth 2 -type f
+          else
+            echo "[WARN] mod/skills missing"
+          fi
+
+
+          echo "=== Copy BundledSkillInstaller ==="
+
           if [ -f "mod/BundledSkillInstaller.java" ]; then
+
             mkdir -p app/src/main/java/me/rerere/rikkahub
-            cp mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/
-                          python3 - <<'EOF'
-          from pathlib import Path
 
-          path = Path(
-          "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
-          )
+            cp -f mod/BundledSkillInstaller.java \
+            app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
 
-          text = path.read_text(encoding="utf-8")
+            echo "[OK] BundledSkillInstaller copied"
 
+          else
 
-          target = """super.onCreate()
-          """
+            echo "[WARN] BundledSkillInstaller missing"
 
-          insert = """super.onCreate()
-
-          BundledSkillInstaller.install(this)
-          """
+          fi
 
 
-          if "BundledSkillInstaller.install(this)" not in text:
-              text = text.replace(target, insert, 1)
-              print("[OK] Installer injected")
-          else:
-              print("[OK] Installer already exists")
+
+          echo "=== Inject Installer Into RikkaHubApp ==="
+
+          python3 <<'EOF'
+from pathlib import Path
+
+path = Path(
+"app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+)
+
+if path.exists():
+
+    text = path.read_text(encoding="utf-8")
 
 
-          path.write_text(text, encoding="utf-8")
-          EOF
-                    fi
+    if "BundledSkillInstaller.install(this)" not in text:
 
-                    echo "=== 6. Force Skills Enable + Keep Installer ==="
+        old = """modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
+        }
+
+"""
+
+        new = """modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
+        }
+
+        BundledSkillInstaller.install(this)
+
+"""
+
+        if old in text:
+
+            text=text.replace(old,new,1)
+
+            print("[OK] installer injected after Koin")
+
+        else:
+
+            print("[WARN] injection point not found")
+
+
+    else:
+
+        print("[OK] installer already exists")
+
+
+    path.write_text(text,encoding="utf-8")
+
+else:
+
+    print("[WARN] RikkaHubApp.kt missing")
+
+EOF
+
+
+
 
           echo "=== Patch SkillsTools.kt ==="
 
+
           SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
 
+
           if [ -f "$SKILLS_TOOLS" ]; then
-            python3 - <<'EOF'
-          from pathlib import Path
 
-          path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
 
-          text = path.read_text(encoding="utf-8")
+          python3 <<'EOF'
+from pathlib import Path
 
-          # 原官方逻辑：只加载助手启用的技能
-          old = "val available = allSkills.filter { it.name in enabledSkills }"
 
-          # 修改为：全部技能可用
-          new = "val available = allSkills"
+path=Path(
+"app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
+)
 
-          if old in text:
-              text = text.replace(old, new)
-              print("[OK] SkillsTools.kt all skills enabled")
-          else:
-              print("[WARN] SkillsTools.kt target not found")
 
-          path.write_text(text, encoding="utf-8")
-          EOF
-           else
-            echo "[WARN] SkillsTools.kt missing"
+text=path.read_text(encoding="utf-8")
+
+
+old="val available = allSkills.filter { it.name in enabledSkills }"
+
+
+if old in text:
+
+    text=text.replace(
+        old,
+        "val available = allSkills"
+    )
+
+    print("[OK] SkillsTools patched")
+
+else:
+
+    print("[WARN] SkillsTools target not found")
+
+
+path.write_text(text,encoding="utf-8")
+
+EOF
+
           fi
 
 
-          echo "=== Patch BundledSkillInstaller Version ==="
+
+
+
+          echo "=== Patch ChatService ==="
+
+
+          CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
+
+
+          if [ -f "$CHAT_SERVICE" ]; then
+
+
+          python3 <<'EOF'
+from pathlib import Path
+
+
+path=Path(
+"app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
+)
+
+
+text=path.read_text(encoding="utf-8")
+
+
+text=text.replace(
+"assistant.enabledSkills.isNotEmpty()",
+"true"
+)
+
+
+path.write_text(text,encoding="utf-8")
+
+
+print("[OK] ChatService patched")
+
+EOF
+
+
+          fi
+
+
+
+
+
+
+          echo "=== Patch BundledSkillInstaller ==="
+
 
           INSTALLER="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
 
+
           if [ -f "$INSTALLER" ]; then
 
-            sed -i \
-            's/getInt("installed_version", 0) < 1/getInt("installed_version", 0) < 2/g' \
-            "$INSTALLER"
 
-            sed -i \
-            's/putInt("installed_version", 1)/putInt("installed_version", 2)/g' \
-            "$INSTALLER"
+          python3 <<'EOF'
+from pathlib import Path
 
-            echo "[OK] Installer version bumped"
+
+path=Path(
+"app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
+)
+
+
+text=path.read_text(encoding="utf-8")
+
+
+text=text.replace(
+'''
+if (file.exists()) {
+            return;
+        }
+''',
+'''
+if (file.exists() && file.isFile()) {
+            return;
+        }
+'''
+)
+
+
+text=text.replace(
+'getInt("installed_version", 0) < 1',
+'getInt("installed_version", 0) < 2'
+)
+
+
+text=text.replace(
+'putInt("installed_version", 1)',
+'putInt("installed_version", 2)'
+)
+
+
+path.write_text(text,encoding="utf-8")
+
+
+print("[OK] Installer patched")
+
+EOF
+
+
           fi
 
 
-          echo "=== Add Proguard Rules ==="
+
+
+
+
+          echo "=== Add R8 Keep Rules ==="
 
 
           cat >> app/proguard-rules.pro <<'EOF'
 
 
-          # ================================
-          # Bundled Skills Protection
-          # ================================
+# ===========================
+# Builtin Skills
+# ===========================
 
-          -keep class me.rerere.rikkahub.BundledSkillInstaller {
-              public *;
-          }
-
-          -keep class me.rerere.rikkahub.data.files.SkillManager {
-              *;
-          }
-
-          -keep class me.rerere.rikkahub.data.files.SkillMetadata {
-              *;
-          }
-
-          -keep class me.rerere.rikkahub.data.files.SkillPaths {
-              *;
-          }
-
-          -keep class me.rerere.rikkahub.data.files.SkillFrontmatterParser {
-              *;
-          }
+-keep class me.rerere.rikkahub.BundledSkillInstaller {
+    *;
+}
 
 
-          # Kotlin serialization models
-          -keepattributes *Annotation*
+-keep class me.rerere.rikkahub.data.files.SkillManager {
+    *;
+}
 
-          EOF
+
+-keep class me.rerere.rikkahub.data.files.SkillMetadata {
+    *;
+}
 
 
-          echo "=== Force Chat Skills ==="
+-keep class me.rerere.rikkahub.data.files.SkillPaths {
+    *;
+}
 
-          CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
 
-          if [ -f "$CHAT_SERVICE" ]; then
+-keep class me.rerere.rikkahub.data.files.SkillFrontmatterParser {
+    *;
+}
 
-            sed -i \
-            's/assistant\.enabledSkills\.isNotEmpty()/true/g' \
-            "$CHAT_SERVICE"
 
-            echo "[OK] ChatService forced skills"
-          fi
+-keepattributes *Annotation*
+
+EOF
+
+
+          echo "=== Skill Patch Finished ==="
 
       # Step 6: 编译未签名 Release APK
       - name: Build Release APK
