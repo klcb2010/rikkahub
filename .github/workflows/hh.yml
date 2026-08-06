@@ -1,4 +1,4 @@
-name: Unsigned Release
+name: Unsigned Release  concurrency
 on:
   schedule:
     - cron: '0 18 * * *'
