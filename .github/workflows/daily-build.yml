@@ -183,23 +183,22 @@ jobs:
             echo "[OK] Injected 'deletable' property into Assistant.kt"
           fi
 
-          # 10.1 彻底解决“删两次”Bug：封印默认助手生成逻辑
-          PREF_STORE=$(find app/src/main/java -name "PreferencesStore.kt")
-          if [ -f "$PREF_STORE" ]; then
-            # 逻辑：RikkaHub 内部有一个变量/函数叫 DEFAULT_ASSISTANTS (注意不是 IDS)
-            # 它是真正产生 Assistant 对象列表的地方。
-            # 我们把它的赋值内容强行改为 emptyList()
+          # 10.5 修复“删除两次”Bug：封印自动恢复逻辑
+          # 我们不再去改 PreferencesStore.kt 里的列表定义（防止多行声明破坏语法）
+          # 我们直接去改调用这个列表的地方，让它认为“没有任何助理需要恢复”
 
-            # 1. 先把 ID 列表搞废 (保留之前的稳妥做法)
-            sed -i 's/val DEFAULT_ASSISTANTS_IDS = .*/val DEFAULT_ASSISTANTS_IDS = emptyList<kotlin.uuid.Uuid>()/g' "$PREF_STORE"
+          # 1. 撤销对 PreferencesStore.kt 可能造成的破坏（如果文件还在的话）
+          # 实际上 git checkout 或者直接重新运行 Action 就会恢复，所以我们跳过撤销。
 
-            # 2. 核心：把产生默认 Assistant 对象的列表直接清空
-            # 源码里通常是 val DEFAULT_ASSISTANTS = listOf(Assistant(...), ...)
-            # 我们直接把等号后面的所有内容换成 emptyList()
-            sed -i 's/val DEFAULT_ASSISTANTS = .*/val DEFAULT_ASSISTANTS = emptyList<me.rerere.rikkahub.data.model.Assistant>()/g' "$PREF_STORE"
+          # 2. 修改逻辑入口：在所有 UI 或 Service 中，将针对 DEFAULT_ASSISTANTS_IDS 的 contains 检查全部设为 false
+          # 这样系统在检查“是否缺了默认助手”时，会永远认为“不缺”
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/[^ ]*\.contains(it\.id)/false/g' {} + || true
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.id in DEFAULT_ASSISTANTS_IDS/false/g' {} + || true
 
-            echo "[OK] NOPed DEFAULT_ASSISTANTS to prevent auto-respawn"
-          fi
+          # 3. 针对性的 Patch 针对 DEFAULT_ASSISTANTS 的遍历
+          # 逻辑：如果代码里有 DEFAULT_ASSISTANTS.forEach { ... }，我们将列表名改掉
+          # 或者最简单的：让 DEFAULT_ASSISTANTS_IDS 这个变量在逻辑上消失
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/DEFAULT_ASSISTANTS_IDS/emptyList<kotlin.uuid.Uuid>()/g' {} + || true
 
           # 11. 强开助手删除功能 (精准版)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
