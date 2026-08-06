@@ -293,19 +293,136 @@ jobs:
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
             cp mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/
-            sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
+                          python3 - <<'EOF'
+          from pathlib import Path
+
+          path = Path(
+          "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+          )
+
+          text = path.read_text(encoding="utf-8")
+
+
+          target = """super.onCreate()
+          """
+
+          insert = """super.onCreate()
+
+          BundledSkillInstaller.install(this)
+          """
+
+
+          if "BundledSkillInstaller.install(this)" not in text:
+              text = text.replace(target, insert, 1)
+              print("[OK] Installer injected")
+          else:
+              print("[OK] Installer already exists")
+
+
+          path.write_text(text, encoding="utf-8")
+          EOF
+                    fi
+
+                    echo "=== 6. Force Skills Enable + Keep Installer ==="
+
+          echo "=== Patch SkillsTools.kt ==="
+
+          SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
+
+          if [ -f "$SKILLS_TOOLS" ]; then
+            python3 - <<'EOF'
+          from pathlib import Path
+
+          path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
+
+          text = path.read_text(encoding="utf-8")
+
+          # 原官方逻辑：只加载助手启用的技能
+          old = "val available = allSkills.filter { it.name in enabledSkills }"
+
+          # 修改为：全部技能可用
+          new = "val available = allSkills"
+
+          if old in text:
+              text = text.replace(old, new)
+              print("[OK] SkillsTools.kt all skills enabled")
+          else:
+              print("[WARN] SkillsTools.kt target not found")
+
+          path.write_text(text, encoding="utf-8")
+          EOF
+           else
+            echo "[WARN] SkillsTools.kt missing"
           fi
 
-          echo "=== 6. Forced Skills Logic & Proguard ==="
-          # 强开所有后台技能 (ChatService.kt & SkillsTools.kt)
-          [ -f "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" ] && sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" || true
-          [ -f "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" ] && sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" || true
 
-          # 综合 Proguard 混淆保护规则
-          cat >> app/proguard-rules.pro <<EOF
-          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
-          -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
+          echo "=== Patch BundledSkillInstaller Version ==="
+
+          INSTALLER="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
+
+          if [ -f "$INSTALLER" ]; then
+
+            sed -i \
+            's/getInt("installed_version", 0) < 1/getInt("installed_version", 0) < 2/g' \
+            "$INSTALLER"
+
+            sed -i \
+            's/putInt("installed_version", 1)/putInt("installed_version", 2)/g' \
+            "$INSTALLER"
+
+            echo "[OK] Installer version bumped"
+          fi
+
+
+          echo "=== Add Proguard Rules ==="
+
+
+          cat >> app/proguard-rules.pro <<'EOF'
+
+
+          # ================================
+          # Bundled Skills Protection
+          # ================================
+
+          -keep class me.rerere.rikkahub.BundledSkillInstaller {
+              public *;
+          }
+
+          -keep class me.rerere.rikkahub.data.files.SkillManager {
+              *;
+          }
+
+          -keep class me.rerere.rikkahub.data.files.SkillMetadata {
+              *;
+          }
+
+          -keep class me.rerere.rikkahub.data.files.SkillPaths {
+              *;
+          }
+
+          -keep class me.rerere.rikkahub.data.files.SkillFrontmatterParser {
+              *;
+          }
+
+
+          # Kotlin serialization models
+          -keepattributes *Annotation*
+
           EOF
+
+
+          echo "=== Force Chat Skills ==="
+
+          CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
+
+          if [ -f "$CHAT_SERVICE" ]; then
+
+            sed -i \
+            's/assistant\.enabledSkills\.isNotEmpty()/true/g' \
+            "$CHAT_SERVICE"
+
+            echo "[OK] ChatService forced skills"
+          fi
 
       # Step 6: 编译未签名 Release APK
       - name: Build Release APK
