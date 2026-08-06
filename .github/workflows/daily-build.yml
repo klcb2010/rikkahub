@@ -186,22 +186,14 @@ jobs:
             echo "[OK] Injected 'deletable' property into Assistant.kt"
           fi
 
-          # 11. 全局解开助手的删除按钮 UI 限制 (修复针对自带助手的过滤)
-          ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
-          if [ -f "$ASSISTANT_PAGE" ]; then
-            # 破除自带助手 protection 逻辑（匹配 !in 语法及 .contains）
-            sed -i 's/assistant\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/it\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/!DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/false/g' "$ASSISTANT_PAGE" || true
-            echo "[OK] Force-unlocked Delete option in AssistantPage.kt"
-          fi
+          # 11. 全局解开助手的删除按钮 UI 限制
+          # 将所有 it.deletable 和 assistant.deletable 的引用强开为 true
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} +
 
-          # 解锁常规 deletable 及 当前选中助手 限制
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} + || true
+          # 绕过“如果是当前助手就不能删除”的逻辑限制
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} +
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} +
 
           # 12. 保证修改过的数据类在 R8 下不被破坏
           echo "-keep class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
