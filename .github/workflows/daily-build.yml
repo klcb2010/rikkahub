@@ -160,7 +160,7 @@ jobs:
             fi
           fi
 
-          # 8. 修复 baselineprofile 插件版本冲突并移除构建入口 (保持你原有的逻辑)
+          # 8. 修复 baselineprofile 插件版本冲突并移除构建入口
           BASELINE_FILE="app/baselineprofile/build.gradle.kts"
           if [ -f "$BASELINE_FILE" ]; then
             sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
@@ -178,38 +178,31 @@ jobs:
           echo "-keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }" >> app/proguard-rules.pro
           echo "[OK] Added proguard keep rules"
 
+          # 10. 修改 Assistant.kt: 在数据类末尾注入 deletable 属性
+          ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
+          if [ -f "$ASSISTANT_MODEL" ]; then
+            # 在 allowConversationPromptInjection 后面追加 deletable
+            sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL"
+            echo "[OK] Injected 'deletable' property into Assistant.kt"
+          fi
+
+          # 11. 全局解开助手的删除按钮 UI 限制
+          # 将所有 it.deletable 和 assistant.deletable 的引用强开为 true
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} +
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} +
+
+          # 绕过“如果是当前助手就不能删除”的逻辑限制
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} +
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} +
+
+          # 12. 保证修改过的数据类在 R8 下不被破坏
+          echo "-keep class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
+          echo "-keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
+          echo "[OK] Added Assistant model to proguard keep rules"
+
           echo "=== Mod apply done ==="
           echo "=== Checking Firebase leftovers ==="
           grep -R "Firebase\|analytics =" app/src/main/java || true
-
-          # 10. 修改 Assistant.kt: 增加默认可删除属性
-          ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
-          if [ -f "$ASSISTANT_MODEL" ]; then
-            # 在最后一个属性后面增加 deletable 属性，默认为 true
-            # 我们定位到最后一个属性 allowConversationPromptInjection
-            sed -i '/val allowConversationPromptInjection: Boolean = false,/a \    val deletable: Boolean = true,' "$ASSISTANT_MODEL"
-            echo "[OK] Added deletable property to Assistant model"
-          fi
-
-          # 11. 强制解锁所有助手的删除限制 (UI 层)
-          # 在 RikkaHub 中，通常在 AssistantEditScreen 或类似的 Compose 代码中会有删除判断
-          # 我们通过全局搜索特定的删除逻辑字面量来 Patch
-
-          # 搜索控制删除按钮显示的逻辑 (常见逻辑是：如果不是内置助手且不是当前助手则显示)
-          # 我们直接把 UI 中所有关于 "能否删除" 的判断强行改为 true
-          find app/src/main/java -type f -name "*Screen.kt" -exec sed -i 's/it\.deletable/true/g' {} +
-          find app/src/main/java -type f -name "*Screen.kt" -exec sed -i 's/assistant\.deletable/true/g' {} +
-
-          # 额外 Patch：如果是根据 ID 判断（比如禁止删除 ID 为 0 的助手），我们也绕过它
-          # 只要代码里有类似于 "id != ..." 的删除前置条件，统一改为 true
-          # 注意：这一步比较泛用，为了安全，我们针对助手编辑界面
-          EDIT_SCREEN="app/src/main/java/me/rerere/rikkahub/ui/screen/assistant/AssistantEditScreen.kt"
-          if [ -f "$EDIT_SCREEN" ]; then
-            # 假设删除按钮的显示逻辑是：if (assistant.id != null)
-            # 我们强制让删除按钮始终显示
-            sed -i 's/showDeleteDialog = true/showDeleteDialog = true \/\/ forced/g' "$EDIT_SCREEN"
-            echo "[OK] Unlocked delete button in AssistantEditScreen"
-          fi
 
       - name: Build Release APK
         run: |
@@ -231,5 +224,5 @@ jobs:
           prerelease: true
           body: |
             自动每日构建 `${{ github.sha }}`
-            Mod: 内置 skills + 强制启用全部技能
+            Mod: 内置 skills + 强制启用全部技能 + 强开助手删除按钮 (含 DEX 精简合并)
           files: app/build/outputs/apk/release/*.apk
