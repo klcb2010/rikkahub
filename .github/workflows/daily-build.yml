@@ -228,16 +228,16 @@ jobs:
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
 
-          echo "=== 4. Fix Double-Delete Bug ==="
+          echo "===  Fix Double-Delete Bug ==="
           # 
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
-          if [ -f "$PREF_STORE" ]; then
-            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE" || true
-            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE" || true
-            echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
-          fi
+           if [ -f "$PREF_STORE" ]; then
+           perl -i -0777 -pe 's/val DEFAULT_ASSISTANTS = listOf\(.*?\)/val DEFAULT_ASSISTANTS = listOf(me.rerere.rikkahub.data.model.Assistant(id = kotlin.uuid.Uuid.parse("00000000-0000-0000-0000-000000000000"), name = "GHOST"))/gs' "$PREF_STORE"
 
-          echo "=== 5. Copy Builtin Skills & Installer ==="
+           echo "[OK] Respawn logic neutralized with GHOST assistant"
+           fi
+
+            echo "=== 5. Copy Builtin Skills & Installer ==="
           # 
           mkdir -p app/src/main/assets/skills
           [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/ || true
