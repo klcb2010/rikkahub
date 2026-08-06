@@ -74,38 +74,29 @@ jobs:
           set -e
           echo "=== Applying custom mods ==="
 
-          # 1. 开启 R8 代码压缩与优化（实现 7 DEX 变 3 DEX）
+          # 1. 开启 R8 代码压缩与优化 (实现 7 DEX 变 3 DEX)
           GRADLE_FILE="app/build.gradle.kts"
           if [ -f "$GRADLE_FILE" ]; then
             sed -i '/release {/,/}/s/isMinifyEnabled = false/isMinifyEnabled = true/' "$GRADLE_FILE"
             sed -i '/release {/,/}/s/isShrinkResources = false/isShrinkResources = true/' "$GRADLE_FILE"
-            echo "[OK] Enabled R8 Minify & Shrink in app/build.gradle.kts"
-          else
-            echo "[Error] app/build.gradle.kts not found"
-            exit 1
+            echo "[OK] Enabled R8 Minify & Shrink"
           fi
 
-          # 2. 修改 ChatService.kt：强制注入所有技能
+          # 2. 修改 ChatService.kt：强制进入技能加载入口 (后端逻辑)
           CHAT_FILE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
           if [ -f "$CHAT_FILE" ]; then
             sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "$CHAT_FILE"
-            echo "[OK] Patched ChatService.kt: forced skill entry"
-          else
-            echo "[Error] ChatService.kt not found"
-            exit 1
+            echo "[OK] Patched ChatService.kt"
           fi
 
-          # 3. 修改 SkillsTools.kt：解除 enabledSkills 过滤限制
+          # 3. 修改 SkillsTools.kt：解除技能过滤限制 (后端逻辑)
           SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
           if [ -f "$SKILL_TOOLS" ]; then
             sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "$SKILL_TOOLS"
-            echo "[OK] Patched SkillsTools.kt: bypassed filter"
-          else
-            echo "[Error] SkillsTools.kt not found"
-            exit 1
+            echo "[OK] Patched SkillsTools.kt"
           fi
 
-          # 4. 移除 Firebase
+          # 4. 彻底移除 Firebase 依赖和代码
           echo "=== Removing Firebase ==="
           sed -i '/id("com\.google\.gms\.google-services")/d' app/build.gradle.kts || true
           sed -i '/libs\.firebase/d' app/build.gradle.kts || true
@@ -113,29 +104,16 @@ jobs:
           sed -i '/google-services/d' gradle/libs.versions.toml || true
           sed -i '/libs\.plugins\.google/d' build.gradle.kts || true
           sed -i '/libs\.plugins\.firebase/d' build.gradle.kts || true
-
           find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
           find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} + || true
-
           sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
-
-          VIEWMODEL_MODULE="app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt"
-          if [ -f "$VIEWMODEL_MODULE" ]; then
-            sed -i '/Firebase/d' "$VIEWMODEL_MODULE" || true
-            sed -i '/analytics\s*=/d' "$VIEWMODEL_MODULE" || true
-            echo "[OK] Removed Firebase analytics injection"
-          fi
-          echo "[OK] Firebase removed"
 
           # 5. 技能包塞进 assets
           mkdir -p app/src/main/assets/skills
           if [ -d "mod/skills" ]; then
             cp -r mod/skills/* app/src/main/assets/skills/
-            echo "[OK] Skills copied to assets/skills/"
+            echo "[OK] Skills copied"
           fi
 
           # 6. 复制 BundledSkillInstaller.java
@@ -143,83 +121,66 @@ jobs:
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
             cp mod/BundledSkillInstaller.java "$INSTALLER_PATH"
-            echo "[OK] BundledSkillInstaller.java copied"
+            echo "[OK] Installer copied"
           fi
 
-          # 7. 改 RikkaHubApp.kt: super.onCreate() 后插入 install 调用
+          # 7. 改 RikkaHubApp.kt：插入 install 调用
           APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
           if [ -f "$APP_FILE" ]; then
-            if ! grep -q "BundledSkillInstaller.install" "$APP_FILE"; then
-              sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
-              echo "[OK] Injected install() into RikkaHubApp.kt"
-            else
-              echo "[Skip] install() already exists in RikkaHubApp.kt"
-            fi
+            sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
+            echo "[OK] Injected install() into RikkaHubApp"
           fi
 
-          # 8. 修复 baselineprofile 插件版本冲突并移除构建入口
+          # 8. 修复 baselineprofile 插件版本冲突
           BASELINE_FILE="app/baselineprofile/build.gradle.kts"
           if [ -f "$BASELINE_FILE" ]; then
             sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
-            echo "[OK] Fixed baselineprofile com.android.test version"
           fi
-
           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
-          sed -i '/alias(libs.plugins.baselineprofile)/d' app/build.gradle.kts || true
-          sed -i '/alias(libs.plugins.android.test)/d' build.gradle.kts || true
-          sed -i '/alias(libs.plugins.baselineprofile)/d' build.gradle.kts || true
 
-          # 9. 防 R8 误删自定义类的 Keep 规则
-          echo -e "\n-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }" >> app/proguard-rules.pro
-          echo "-keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }" >> app/proguard-rules.pro
-          echo "[OK] Added proguard keep rules"
+          # 9. 增加 Proguard Keep 规则
+          cat >> app/proguard-rules.pro <<EOF
+          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
+          -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
+          -keep class me.rerere.rikkahub.data.model.Assistant { *; }
+          -keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }
+          EOF
 
-          # 10. 修改 Assistant.kt: 在数据类末尾注入 deletable 属性
+          # 10. 修改 Assistant.kt: 注入 deletable 属性 (模型层)
           ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
           if [ -f "$ASSISTANT_MODEL" ]; then
-            # 在 allowConversationPromptInjection 后面追加 deletable
             sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL"
-            echo "[OK] Injected 'deletable' property into Assistant.kt"
+            echo "[OK] Injected deletable to Assistant model"
           fi
 
-          # 10.5 修复“删除两次”Bug：封印自动恢复逻辑
-          # 我们不再去改 PreferencesStore.kt 里的列表定义（防止多行声明破坏语法）
-          # 我们直接去改调用这个列表的地方，让它认为“没有任何助理需要恢复”
-
-          # 1. 撤销对 PreferencesStore.kt 可能造成的破坏（如果文件还在的话）
-          # 实际上 git checkout 或者直接重新运行 Action 就会恢复，所以我们跳过撤销。
-
-          # 2. 修改逻辑入口：在所有 UI 或 Service 中，将针对 DEFAULT_ASSISTANTS_IDS 的 contains 检查全部设为 false
-          # 这样系统在检查“是否缺了默认助手”时，会永远认为“不缺”
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/[^ ]*\.contains(it\.id)/false/g' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.id in DEFAULT_ASSISTANTS_IDS/false/g' {} + || true
-
-          # 3. 针对性的 Patch 针对 DEFAULT_ASSISTANTS 的遍历
-          # 逻辑：如果代码里有 DEFAULT_ASSISTANTS.forEach { ... }，我们将列表名改掉
-          # 或者最简单的：让 DEFAULT_ASSISTANTS_IDS 这个变量在逻辑上消失
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/DEFAULT_ASSISTANTS_IDS/emptyList<kotlin.uuid.Uuid>()/g' {} + || true
-
-          # 11. 强开助手删除功能 (精准版)
+          # 11. 强开助手删除选项 (AssistantPage.kt 手术级 Patch)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
-            # 仅针对 ActionSheet 的删除逻辑进行精准替换，不误伤其他页面
-            # 匹配原有的 if (assistant.id !in DEFAULT_ASSISTANTS_IDS) {
+            # 这里的 sed 必须及其精准，只替换 if 判断那一行，不触碰内部代码块
             sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE"
-
-            # 同时将任何可能的 !in 判断转换为 true，确保万无一失
-            sed -i 's/assistant\.id !in DEFAULT_ASSISTANTS_IDS/true/g' "$ASSISTANT_PAGE"
-            echo "[OK] Patched AssistantPage.kt: Force-enabled Delete for all assistants"
+            echo "[OK] Patched AssistantPage.kt: Force-enabled Delete"
           fi
 
-          # 绕过“如果是当前助手就不能删除”的逻辑限制
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} +
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} +
+          # 12. 强开技能开关点亮效果 (SkillsPage.kt 视觉层)
+          SKILLS_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/extensions/skills/SkillsPage.kt"
+          if [ -f "$SKILLS_PAGE" ]; then
+            # 使用更宽泛的正则点亮所有 Switch
+            sed -i 's/checked = .*\.contains(skill\.name)/checked = true/g' "$SKILLS_PAGE"
+            sed -i 's/checked = .*\.contains(it\.name)/checked = true/g' "$SKILLS_PAGE"
+            echo "[OK] Patched SkillsPage.kt: Forced switches to true"
+          fi
 
-          # 12. 保证修改过的数据类在 R8 下不被破坏
-          echo "-keep class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
-          echo "-keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
-          echo "[OK] Added Assistant model to proguard keep rules"
+          # 13. 修复“删除两次”Bug：清空默认助手生成的“源头” (PreferencesStore.kt 安全 Patch)
+          PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
+          if [ -f "$PREF_STORE" ]; then
+            # 使用 perl 多行安全替换，防止产生 top-level declaration 语法错误
+            # 1. 清空 ID 黑名单
+            perl -i -0777 -pe 's/val DEFAULT_ASSISTANTS_IDS = setOf\(.*?\)/val DEFAULT_ASSISTANTS_IDS = emptySet<kotlin.uuid.Uuid>()/gs' "$PREF_STORE"
+            # 2. 清空 默认助手对象模具 (彻底断绝 respawn)
+            perl -i -0777 -pe 's/val DEFAULT_ASSISTANTS = listOf\(.*?\)/val DEFAULT_ASSISTANTS = emptyList<me.rerere.rikkahub.data.model.Assistant>()/gs' "$PREF_STORE"
+            echo "[OK] NOPed Default Assistant respawn logic safely"
+          fi
 
           echo "=== Mod apply done ==="
           echo "=== Checking Firebase leftovers ==="
@@ -246,4 +207,4 @@ jobs:
           body: |
             自动每日构建 `${{ github.sha }}`
             Mod: 内置 skills + 强制启用全部技能 + 强开助手删除按钮 (含 DEX 精简合并)
-          files: app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/release/*.apk/apk/release/*.apk
