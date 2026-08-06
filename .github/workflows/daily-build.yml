@@ -269,14 +269,21 @@ jobs:
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
 
-          echo "=== 4. Fix Double-Delete Bug ==="
-          # 清除自动加回默认助手的复活逻辑，实现一键彻底删除
+            echo "=== 4. Fix Assistant Empty List Crash ==="
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
+
           if [ -f "$PREF_STORE" ]; then
-            echo "[OK] Keep default assistant fallback to prevent empty list crash"
-            sed -i 's/return this.assistants.find { it.id == assistantId } ?: this.assistants.first()/return this.assistants.find { it.id == assistantId } ?: this.assistants.firstOrNull() ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "", systemPrompt = "")/' \
-            app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt
-            echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
+            sed -i 's/return this.assistants.find { it.id == assistantId } ?: this.assistants.first()/return this.assistants.find { it.id == assistantId } ?: this.assistants.firstOrNull() ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "", systemPrompt = "")/' "$PREF_STORE"
+
+            echo "[OK] getCurrentAssistant empty list protected"
+
+            # 不允许首次启动 assistants 为空
+            sed -i 's/it.assistants.ifEmpty { emptyList() }/it.assistants.ifEmpty { DEFAULT_ASSISTANTS }/g' "$PREF_STORE"
+
+            # 恢复默认助手补充逻辑
+            sed -i 's/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/DEFAULT_ASSISTANTS.forEach/g' "$PREF_STORE"
+
+            echo "[OK] Assistant fallback restored"
           fi
 
           echo "=== 5. Copy Builtin Skills & Installer ==="
