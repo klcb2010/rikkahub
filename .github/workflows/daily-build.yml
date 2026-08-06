@@ -137,7 +137,7 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Step 4: 移除 BaselineProfile 模块 (解决 com.android.test 插件冲突)
+      # Step 4: 移除 BaselineProfile 模块
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -147,9 +147,8 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
-          echo "[OK] BaselineProfile disabled."
 
-      # Step 5: 修改 app/build.gradle.kts 与注入所有 Custom Mods
+      # Step 5: 修改 app/build.gradle.kts 与注入 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -198,39 +197,29 @@ jobs:
           print("[OK] app/build.gradle.kts modified successfully.")
           EOF
 
-          echo "=== 2. Deep Cleaning Firebase Code Residues ==="
-          # 代码中清除 Firebase
+          echo "=== 2. Clean Firebase Residues ==="
+          # 清除源码中的 Firebase 与 analytics 引用
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-          find app/src/main/java -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//g' {} + || true
-          find app/src/main/java -name "*.kt" -exec sed -i 's/private val analytics: FirebaseAnalytics,//g' {} + || true
-          find app/src/main/java -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} + || true
           
-          # 移除 Koin AppModule 里的 Firebase 注入块
-          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/single\s*\{\s*\}//gs' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/viewModel\s*\{\s*\}//gs' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/analytics\s*=/d' {} + || true
+          # 针对 DI 模块和 ChatVM 彻底清除 analytics 行
+          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
+          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          echo "=== 3. Restoring Assistant deletable property ==="
-          # 在 Assistant 数据类中注入 deletable 属性以支持解锁
-          ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
-          if [ -f "$ASSISTANT_MODEL" ]; then
-            sed -i 's/val allowConversationPromptInjection: Boolean = false,/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true,/g' "$ASSISTANT_MODEL" || true
-            sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL" || true
-            echo "[OK] deletable property injected into Assistant.kt"
-          fi
-
-          echo "=== 4. Restoring AssistantPage delete button unlock ==="
-          # 强开删除按钮 UI 显示 (破解 !in 语法)
+          echo "=== 3. Unlock Delete Button ==="
+          # 强开删除按钮 UI 显示 (破解 !in DEFAULT_ASSISTANTS_IDS 判定)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
-            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE" || true
+            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS)/if (true)/g' "$ASSISTANT_PAGE" || true
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
 
-          echo "=== 5. Restoring double-delete fix (PreferencesStore.kt) ==="
+          echo "=== 4. Fix Double-Delete Bug ==="
           # 清除自动加回默认助手的复活逻辑，实现一键彻底删除
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
           if [ -f "$PREF_STORE" ]; then
@@ -239,7 +228,7 @@ jobs:
             echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
           fi
 
-          echo "=== 6. Copying Builtin Skills & Installer ==="
+          echo "=== 5. Copy Builtin Skills & Installer ==="
           # 复制 skills 包和安装器到对应资产目录
           mkdir -p app/src/main/assets/skills
           [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/ || true
@@ -249,7 +238,7 @@ jobs:
             sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           fi
 
-          echo "=== 7. Applying Skills bypass & forced logic ==="
+          echo "=== 6. Forced Skills Logic & Proguard ==="
           # 强开所有后台技能 (ChatService.kt & SkillsTools.kt)
           [ -f "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" ] && sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" || true
           [ -f "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" ] && sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" || true
@@ -258,8 +247,6 @@ jobs:
           cat >> app/proguard-rules.pro <<EOF
           -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
           -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
-          -keep class me.rerere.rikkahub.data.model.Assistant { *; }
-          -keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }
           EOF
 
       # Step 6: 编译未签名 Release APK
