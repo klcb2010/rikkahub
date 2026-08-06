@@ -74,12 +74,12 @@ jobs:
           set -e
           echo "=== Applying custom mods ==="
 
-          # 1. 开启 R8 代码压缩与优化 (7 DEX -> 3 DEX)
+         
           GRADLE_FILE="app/build.gradle.kts"
           sed -i '/release {/,/}/s/isMinifyEnabled = false/isMinifyEnabled = true/' "$GRADLE_FILE"
           sed -i '/release {/,/}/s/isShrinkResources = false/isShrinkResources = true/' "$GRADLE_FILE"
 
-          # 2. 深度移除 Firebase 引用
+         
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i 's/, analytics: FirebaseAnalytics//g' {} +
@@ -87,45 +87,42 @@ jobs:
           find app/src/main/java -name "*.kt" -exec sed -i 's/private val analytics: FirebaseAnalytics//g' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
           
-          # 3. 修复 Koin 模块中的 Firebase 注入
+          
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/Firebase/d' {} +
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/analytics\s*=/d' {} +
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/single\s*\{\s*\}//gs' {} +
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/viewModel\s*\{\s*\}//gs' {} +
 
-          # 4. 强制技能加载入口
+          
           [ -f "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" ] && sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
 
-          # 5. 解除技能过滤限制
+         
           [ -f "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" ] && sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
 
-          # 6. 修复删除 bug (禁用复活逻辑)
+          
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
           [ -f "$PREF_STORE" ] && sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE"
           [ -f "$PREF_STORE" ] && sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE"
 
-          # 7. 注入 deletable 属性
+          
           sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 
-          # 8. 强开删除按钮 (AssistantPage)
+          
           [ -f "app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt" ] && sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
 
-          # 9. 强制技能开关状态
-          SKILLS_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/extensions/skills/SkillsPage.kt"
-          [ -f "$SKILLS_PAGE" ] && sed -i 's/checked = .*\.contains(skill\.name)/checked = true/g' "$SKILLS_PAGE"
 
-          # 10. BaselineProfile 修复
+          
           [ -f "app/baselineprofile/build.gradle.kts" ] && sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' app/baselineprofile/build.gradle.kts
           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
 
-          # 11. 技能资产注入
+          
           mkdir -p app/src/main/assets/skills
           [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/
           [ -f "mod/BundledSkillInstaller.java" ] && cp mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
           [ -f "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt" ] && sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
 
-          # 12. Proguard 规则
+          
           cat > app/proguard-rules.pro <<EOF
           -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
           -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
@@ -153,5 +150,5 @@ jobs:
           prerelease: true
           body: |
             自动每日构建 `${{ github.sha }}`
-            Mod: 内置 skills + 强制启用全部技能 + 强开助手删除按钮 (含 DEX 精简合并)
+            Mod: 内置 skills + 强制启用全部技能 + 强开助手删除按钮
           files: app/build/outputs/apk/release/app-release.apk
