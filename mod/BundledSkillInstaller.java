@@ -11,27 +11,26 @@ import java.io.InputStream;
 
 public final class BundledSkillInstaller {
 
-    private static final String TAG = "BundledSkillInstaller";
-
     public static void copyDir(
             AssetManager assetManager,
             String path,
-            File target
+            File file
     ) throws Exception {
 
-        String[] files = assetManager.list(path);
+        String[] list = assetManager.list(path);
 
-        if (files != null && files.length > 0) {
+        if (list != null && list.length != 0) {
 
-            if (!target.exists()) {
-                target.mkdirs();
+            if (!file.exists()) {
+                file.mkdirs();
             }
 
-            for (String file : files) {
+            for (String name : list) {
+
                 copyDir(
                         assetManager,
-                        path + "/" + file,
-                        new File(target, file)
+                        path + "/" + name,
+                        new File(file, name)
                 );
             }
 
@@ -39,37 +38,37 @@ public final class BundledSkillInstaller {
         }
 
 
-        // 文件存在则跳过
-        if (target.exists() && target.isFile()) {
+        if (file.exists()) {
             return;
         }
 
 
-        File parent = target.getParentFile();
+        File parent = file.getParentFile();
 
-        if (parent != null && !parent.exists()) {
+        if (parent != null) {
             parent.mkdirs();
         }
 
 
-        try (
-                InputStream input =
-                        assetManager.open(path);
+        InputStream input =
+                assetManager.open(path);
 
-                FileOutputStream output =
-                        new FileOutputStream(target)
-        ) {
+        FileOutputStream output =
+                new FileOutputStream(file);
 
-            byte[] buffer = new byte[8192];
 
-            int length;
+        byte[] buffer = new byte[8192];
 
-            while ((length = input.read(buffer)) != -1) {
-                output.write(buffer, 0, length);
-            }
+        int len;
 
-            output.flush();
+        while ((len = input.read(buffer)) != -1) {
+            output.write(buffer,0,len);
         }
+
+
+        output.flush();
+        output.close();
+        input.close();
     }
 
 
@@ -81,51 +80,36 @@ public final class BundledSkillInstaller {
             SharedPreferences sp =
                     context.getSharedPreferences(
                             "bundled_skills",
-                            Context.MODE_PRIVATE
+                            0
                     );
 
 
-            int version =
-                    sp.getInt("installed_version", 0);
-
-
-
-            if (version < 2) {
-
-
-                File skillDir =
-                        new File(
-                                context.getFilesDir(),
-                                "skills"
-                        );
+            if (sp.getInt("installed_version",0) < 1) {
 
 
                 copyDir(
                         context.getAssets(),
                         "skills",
-                        skillDir
+                        new File(
+                                context.getFilesDir(),
+                                "skills"
+                        )
                 );
 
 
                 sp.edit()
                         .putInt(
                                 "installed_version",
-                                2
+                                1
                         )
                         .apply();
-
-
-                Log.i(
-                        TAG,
-                        "skills installed"
-                );
             }
 
 
-        } catch (Throwable e) {
+        } catch(Throwable e) {
 
             Log.e(
-                    TAG,
+                    "BundledSkillInstaller",
                     "install failed",
                     e
             );
