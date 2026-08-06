@@ -273,8 +273,9 @@ jobs:
           # 清除自动加回默认助手的复活逻辑，实现一键彻底删除
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
           if [ -f "$PREF_STORE" ]; then
-            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE" || true
-            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE" || true
+            echo "[OK] Keep default assistant fallback to prevent empty list crash"
+            sed -i 's/return this.assistants.find { it.id == assistantId } ?: this.assistants.first()/return this.assistants.find { it.id == assistantId } ?: this.assistants.firstOrNull() ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "", systemPrompt = "")/' \
+            app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt
             echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
           fi
 
