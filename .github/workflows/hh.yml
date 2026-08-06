@@ -1,4 +1,4 @@
-name: Unsigned Release  concurrency
+name: Unsigned Release
 on:
   schedule:
     - cron: '0 18 * * *'
@@ -358,30 +358,44 @@ jobs:
           print("[OK] Installer patched")
           EOF
           fi
-          echo "=== Add R8 Keep Rules ==="
+                    echo "=== Add R8 Keep Rules ==="
           cat >> app/proguard-rules.pro <<'EOF'
           # ===========================
           # Builtin Skills
           # ===========================
+
           -keep class me.rerere.rikkahub.BundledSkillInstaller {
               *;
           }
+
           -keep class me.rerere.rikkahub.data.files.SkillManager {
               *;
           }
+
           -keep class me.rerere.rikkahub.data.files.SkillMetadata {
               *;
           }
+
           -keep class me.rerere.rikkahub.data.files.SkillPaths {
               *;
           }
+
           -keep class me.rerere.rikkahub.data.files.SkillFrontmatterParser {
               *;
           }
+
+          -keep class me.rerere.rikkahub.data.ai.tools.SkillsToolsKt {
+              *;
+          }
+
           -keepattributes *Annotation*
+          -keepattributes Signature
+          -keepattributes InnerClasses
+          -keepattributes EnclosingMethod
+
           EOF
           echo "=== Skill Patch Finished ==="
-      # Step 6: 编译未签名 Release APK
+               # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
         run: |
