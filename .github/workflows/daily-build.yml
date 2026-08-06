@@ -186,27 +186,22 @@ jobs:
             echo "[OK] Injected 'deletable' property into Assistant.kt"
           fi
 
-          # 11. 全局解开助手的删除按钮 UI 限制 (强力版)
-          # A. 修改 AssistantPage.kt：强制显示自带助手的删除菜单
+          # 11. 全局解开助手的删除按钮 UI 限制 (修复针对自带助手的过滤)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
-            # 逻辑：将判断 "是否为默认助手" 的 contains 检查强制改为 false
-            # 即使 ID 在默认列表里，结果也是 false，从而 !false 为 true，显示按钮
-            sed -i 's/DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/false/g' "$ASSISTANT_PAGE"
-
-            # 逻辑：有些版本可能还判断了 "不能删除当前正在使用的助手"
-            # 我们将 assistant.id == settings.assistantId 这种判断也废掉
-            sed -i 's/assistant\.id == settings\.assistantId/false/g' "$ASSISTANT_PAGE"
-            echo "[OK] Forced Delete button for default assistants in AssistantPage.kt"
+            # 破除自带助手 protection 逻辑（匹配 !in 语法及 .contains）
+            sed -i 's/assistant\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
+            sed -i 's/it\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
+            sed -i 's/!DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/true/g' "$ASSISTANT_PAGE" || true
+            sed -i 's/DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/false/g' "$ASSISTANT_PAGE" || true
+            echo "[OK] Force-unlocked Delete option in AssistantPage.kt"
           fi
 
-          # B. 修改模型属性和通用判断 (确保其他可能的 UI 路径也放行)
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} +
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} +
-
-          # C. 绕过助手列表中的“当前助手锁定”逻辑
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} +
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} +
+          # 解锁常规 deletable 及 当前选中助手 限制
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} + || true
+          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} + || true
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} + || true
+          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} + || true
 
           # 12. 保证修改过的数据类在 R8 下不被破坏
           echo "-keep class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
