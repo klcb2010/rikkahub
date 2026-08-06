@@ -137,8 +137,19 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Step 4: 执行您指定的 app/build.gradle.kts 片段精准修剪 (使用 Python 避免空指针)
-      # 并在其基础上，完整注入：助手强删、防复活、技能强开等所有核心 Mod 逻辑
+      # Step 4: 移除 BaselineProfile 模块 (解决 com.android.test 插件冲突)
+      - name: Remove BaselineProfile Module
+        if: steps.check_build.outputs.should_build == 'true'
+        run: |
+          echo "=== Disabling BaselineProfile Module ==="
+          sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
+          sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
+          sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
+          sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
+          sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
+          echo "[OK] BaselineProfile disabled."
+
+      # Step 5: 修改 app/build.gradle.kts 与注入所有 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -196,7 +207,7 @@ jobs:
           find app/src/main/java -name "*.kt" -exec sed -i 's/private val analytics: FirebaseAnalytics,//g' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} + || true
           
-          # 移除 Koin AppModule 里的 Firebase 注入块防止类型推断失败
+          # 移除 Koin AppModule 里的 Firebase 注入块
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/single\s*\{\s*\}//gs' {} + || true
           find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/viewModel\s*\{\s*\}//gs' {} + || true
@@ -206,7 +217,8 @@ jobs:
           # 在 Assistant 数据类中注入 deletable 属性以支持解锁
           ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
           if [ -f "$ASSISTANT_MODEL" ]; then
-            sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL"
+            sed -i 's/val allowConversationPromptInjection: Boolean = false,/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true,/g' "$ASSISTANT_MODEL" || true
+            sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL" || true
             echo "[OK] deletable property injected into Assistant.kt"
           fi
 
@@ -214,7 +226,7 @@ jobs:
           # 强开删除按钮 UI 显示 (破解 !in 语法)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
-            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE"
+            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE" || true
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
 
@@ -222,8 +234,8 @@ jobs:
           # 清除自动加回默认助手的复活逻辑，实现一键彻底删除
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
           if [ -f "$PREF_STORE" ]; then
-            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE"
-            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE"
+            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE" || true
+            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE" || true
             echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
           fi
 
@@ -250,14 +262,14 @@ jobs:
           -keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }
           EOF
 
-      # Step 5: 编译未签名 Release APK
+      # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      # Step 6: 自动创建 Git Tag 并推送
+      # Step 7: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -266,7 +278,7 @@ jobs:
           git push origin "$TAG" || true
           echo "Tag $TAG pushed."
 
-      # Step 7: 发布 Release 并上传未签名 APK
+      # Step 8: 发布 Release 并上传未签名 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true'
         uses: softprops/action-gh-release@v2
