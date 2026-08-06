@@ -74,7 +74,12 @@ jobs:
       - name: Extract Version Name & Check Tag
         id: version
         run: |
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "2.4.5")
+          VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/')
+
+          if [ -z "$VERSION_NAME" ]; then
+          echo "Cannot find versionName"
+           exit 1
+          fi
           TAG_NAME="v${VERSION_NAME}"
           echo "version_name=${VERSION_NAME}" >> $GITHUB_OUTPUT
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
@@ -169,21 +174,68 @@ jobs:
           content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
 
           # 3. signingConfigs 整段删除
-          content = re.sub(r'\s*signingConfigs\s*\{[\s\S]*?\n    \}', '', content)
+          content = re.sub(
+              r'''
+              \n\s*signingConfigs\s*\{
+                  \s*create\("release"\)\s*\{
+                      .*?
+                  \}
+              \s*\}
+              ''',
+              '',
+              content,
+              flags=re.S | re.X
+          )
 
           # 4. buildTypes 中的删除与增加 (强制设定为 false)
           content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
           content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
           
-          # 确保 isMinifyEnabled = false 与 isShrinkResources = false 存在
-          if "isMinifyEnabled" not in content:
-              content = re.sub(r'(release\s*\{)', r'\1\n            isMinifyEnabled = false\n            isShrinkResources = false', content)
-          else:
-              content = re.sub(r'isMinifyEnabled\s*=\s*true', 'isMinifyEnabled = false', content)
-              content = re.sub(r'isShrinkResources\s*=\s*true', 'isShrinkResources = false', content)
+          # 4. buildTypes 中的删除与增加
 
+          content = re.sub(
+              r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*optimization\s*\{[\s\S]*?\}',
+              '',
+              content
+          )
+
+          # 强制开启混淆和资源压缩
+          content = re.sub(
+              r'isMinifyEnabled\s*=\s*(true|false)',
+              'isMinifyEnabled = true',
+              content
+          )
+
+          content = re.sub(
+              r'isShrinkResources\s*=\s*(true|false)',
+              'isShrinkResources = true',
+              content
+          )
+
+          # 如果不存在则插入 release
+          if "isMinifyEnabled" not in content:
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n            isMinifyEnabled = true\n            isShrinkResources = true',
+                  content
+              )
           # 5. sourceSets 整段删除
-          content = re.sub(r'\s*sourceSets\s*\{[\s\S]*?\n    \}', '', content)
+          content = re.sub(
+              r'''
+              \n\s*sourceSets\s*\{
+                  \s*getByName\("androidTest"\)\.assets\.srcDirs\([^\)]*\)
+              \s*\}
+              ''',
+              '',
+              content,
+              flags=re.S | re.X
+            )
 
           # 6. // Firebase 整段删除
           content = re.sub(r'\s*// Firebase', '', content)
