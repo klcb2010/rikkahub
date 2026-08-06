@@ -24,50 +24,33 @@ public final class BundledSkillInstaller {
     }
 
     public static void install(Context context) {
+    try {
+        File skillsDir = new File(context.getFilesDir(), "skills");
 
-        try {
-            SharedPreferences prefs =
-                    context.getSharedPreferences(
-                            PREF_NAME,
-                            Context.MODE_PRIVATE
-                    );
+        if (!skillsDir.exists()
+                || skillsDir.listFiles() == null
+                || skillsDir.listFiles().length == 0) {
 
-            int installedVersion =
-                    prefs.getInt(KEY_VERSION, 0);
-
-            if (installedVersion >= CURRENT_VERSION) {
-                Log.d(TAG, "Skills already installed");
-                return;
-            }
-
-            File target =
-                    new File(
-                            context.getFilesDir(),
-                            TARGET_DIR
-                    );
-
-            if (!target.exists() && !target.mkdirs()) {
-                Log.e(TAG, "Cannot create target dir");
-                return;
-            }
-
-            copyAssets(
-                    context.getAssets(),
-                    ASSET_SKILLS_DIR,
-                    target
+            copyDir(
+                context.getAssets(),
+                "skills",
+                skillsDir
             );
 
-            prefs.edit()
-                    .putInt(KEY_VERSION, CURRENT_VERSION)
-                    .apply();
-
-            Log.i(TAG, "Skills installed");
-
-        } catch (Exception e) {
-            Log.e(TAG, "Install skills failed", e);
+            Log.i(
+                "BundledSkillInstaller",
+                "skills copied: " + skillsDir
+            );
         }
-    }
 
+    } catch (Throwable e) {
+        Log.e(
+            "BundledSkillInstaller",
+            "install failed",
+            e
+        );
+    }
+}
 
     private static void copyAssets(
             AssetManager assetManager,
