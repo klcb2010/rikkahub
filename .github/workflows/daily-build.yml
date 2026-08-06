@@ -1,4 +1,4 @@
-name: Unsigned Release
+name: Daily Build
 
 on:
   schedule:
@@ -32,7 +32,7 @@ jobs:
           echo "=== Step 1: Backup protected files ==="
           mkdir -p /tmp/protected_backup
 
-          # 
+          # 备份要保护的文件和文件夹
           [ -f ".github/workflows/daily-build.yml" ] && cp --parents .github/workflows/daily-build.yml /tmp/protected_backup/ || true
           [ -f "README.md" ] && cp --parents README.md /tmp/protected_backup/ || true
           [ -f "build.gradle.kts" ] && cp --parents build.gradle.kts /tmp/protected_backup/ || true
@@ -43,7 +43,7 @@ jobs:
           git remote add upstream https://github.com/rikkahub/rikkahub.git || true
           git fetch upstream master || git fetch upstream main
 
-          # 
+          # 尝试合并上游 master/main
           UPSTREAM_BRANCH="upstream/master"
           git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || UPSTREAM_BRANCH="upstream/main"
           
@@ -70,25 +70,16 @@ jobs:
             echo "has_sync_changes=false" >> $GITHUB_OUTPUT
           fi
 
-      # Step 2: 
+      # Step 2: 获取版本号与 Tag 判定
       - name: Extract Version Name & Check Tag
         id: version
         run: |
-          set -e
-          # 
-          VERSION_NAME=$(sed -n 's/.*versionName\s*=\s*"\(.*\)".*/\1/p' app/build.gradle.kts | tr -d '[:space:]')
-          
-          if [ -z "$VERSION_NAME" ]; then
-            echo "Error: Failed to dynamically extract versionName from app/build.gradle.kts!"
-            exit 1
-          fi
-
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts || echo "2.4.5")
           TAG_NAME="v${VERSION_NAME}"
           echo "version_name=${VERSION_NAME}" >> $GITHUB_OUTPUT
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          echo "[OK] Extracted Version Name: ${VERSION_NAME}"
 
-          # 
+          # 检查标签是否已存在
           if git rev-parse "$TAG_NAME" >/dev/null 2>&1 || git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}"; then
             echo "tag_exists=true" >> $GITHUB_OUTPUT
             echo "Tag ${TAG_NAME} already exists."
@@ -97,7 +88,7 @@ jobs:
             echo "New Tag ${TAG_NAME} will be created."
           fi
 
-      # Step 3: 
+      # Step 3: 确定是否继续编译 (如无更新且标签已存在，且非手动触发则跳过)
       - name: Check Should Build
         id: check_build
         run: |
@@ -110,7 +101,7 @@ jobs:
             echo "无新提交且版本号标签未更新，跳过构建。"
           fi
 
-      # ----  ----
+      # ---- 如果需要构建，进入构建准备环境 ----
       - name: Set up JDK 17
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/setup-java@v4
@@ -146,7 +137,7 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Step 4: 
+      # Step 4: 移除 BaselineProfile 模块
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -157,11 +148,11 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
 
-      # Step 5: 
+      # Step 5: 修改 app/build.gradle.kts 与注入 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
-          echo "=== 1. Modifying app/build.gradle.kts with Python (Enabling R8) ==="
+          echo "=== 1. Modifying app/build.gradle.kts with Python ==="
           python3 - << 'EOF'
           import re
 
@@ -169,32 +160,32 @@ jobs:
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
 
-          # 1. 
+          # 1. plugins 中的删除
           content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
           content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
 
-          # 2. 
+          # 2. splits 中的删除注释
           content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
           content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
 
-          # 3. 
+          # 3. signingConfigs 整段删除
           content = re.sub(r'\s*signingConfigs\s*\{[\s\S]*?\n    \}', '', content)
 
-          # 4. 
+          # 4. buildTypes 中的删除与增加 (强制设定为 false)
           content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
           content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
           
-          # 
+          # 确保 isMinifyEnabled = false 与 isShrinkResources = false 存在
           if "isMinifyEnabled" not in content:
-              content = re.sub(r'(release\s*\{)', r'\1\n            isMinifyEnabled = true\n            isShrinkResources = true', content)
+              content = re.sub(r'(release\s*\{)', r'\1\n            isMinifyEnabled = false\n            isShrinkResources = false', content)
           else:
-              content = re.sub(r'isMinifyEnabled\s*=\s*false', 'isMinifyEnabled = true', content)
-              content = re.sub(r'isShrinkResources\s*=\s*false', 'isShrinkResources = true', content)
+              content = re.sub(r'isMinifyEnabled\s*=\s*true', 'isMinifyEnabled = false', content)
+              content = re.sub(r'isShrinkResources\s*=\s*true', 'isShrinkResources = false', content)
 
-          # 5. 
+          # 5. sourceSets 整段删除
           content = re.sub(r'\s*sourceSets\s*\{[\s\S]*?\n    \}', '', content)
 
-          # 6. 
+          # 6. // Firebase 整段删除
           content = re.sub(r'\s*// Firebase', '', content)
           content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
           content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
@@ -203,16 +194,16 @@ jobs:
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(content)
 
-          print("[OK] app/build.gradle.kts modified with R8 enabled.")
+          print("[OK] app/build.gradle.kts modified successfully.")
           EOF
 
           echo "=== 2. Clean Firebase Residues ==="
-          # 
+          # 清除源码中的 Firebase 与 analytics 引用
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
           
-          # 
+          # 针对 DI 模块和 ChatVM 彻底清除 analytics 行
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
@@ -221,24 +212,24 @@ jobs:
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
           echo "=== 3. Unlock Delete Button ==="
-          # 
+          # 强开删除按钮 UI 显示 (破解 !in DEFAULT_ASSISTANTS_IDS 判定)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
             sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS)/if (true)/g' "$ASSISTANT_PAGE" || true
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
 
-          echo "===  Fix Double-Delete Bug ==="
-          # 
+          echo "=== 4. Fix Double-Delete Bug ==="
+          # 清除自动加回默认助手的复活逻辑，实现一键彻底删除
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
-           if [ -f "$PREF_STORE" ]; then
-           perl -i -0777 -pe 's/val DEFAULT_ASSISTANTS = listOf\(.*?\)/val DEFAULT_ASSISTANTS = listOf(me.rerere.rikkahub.data.model.Assistant(id = kotlin.uuid.Uuid.parse("00000000-0000-0000-0000-000000000000"), name = "GHOST"))/gs' "$PREF_STORE"
+          if [ -f "$PREF_STORE" ]; then
+            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE" || true
+            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE" || true
+            echo "[OK] Respawn logic neutralized in PreferencesStore.kt"
+          fi
 
-           echo "[OK] Respawn logic neutralized with GHOST assistant"
-           fi
-
-            echo "=== 5. Copy Builtin Skills & Installer ==="
-          # 
+          echo "=== 5. Copy Builtin Skills & Installer ==="
+          # 复制 skills 包和安装器到对应资产目录
           mkdir -p app/src/main/assets/skills
           [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/ || true
           if [ -f "mod/BundledSkillInstaller.java" ]; then
@@ -248,26 +239,24 @@ jobs:
           fi
 
           echo "=== 6. Forced Skills Logic & Proguard ==="
-          # 
+          # 强开所有后台技能 (ChatService.kt & SkillsTools.kt)
           [ -f "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" ] && sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" || true
           [ -f "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" ] && sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" || true
 
-          # 
+          # 综合 Proguard 混淆保护规则
           cat >> app/proguard-rules.pro <<EOF
           -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
           -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
-          -keep class me.rerere.rikkahub.data.model.Assistant { *; }
-          -keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }
           EOF
 
-      # Step 6: 
+      # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      # Step 7: 
+      # Step 7: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -276,7 +265,7 @@ jobs:
           git push origin "$TAG" || true
           echo "Tag $TAG pushed."
 
-      # Step 8: 
+      # Step 8: 发布 Release 并上传未签名 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true'
         uses: softprops/action-gh-release@v2
