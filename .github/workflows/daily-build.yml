@@ -1,4 +1,4 @@
-name: Daily Build
+name: Unsigned Release
 
 on:
   schedule:
