@@ -74,108 +74,64 @@ jobs:
           set -e
           echo "=== Applying custom mods ==="
 
-          # 1. 开启 R8 代码压缩与优化 (实现 7 DEX 变 3 DEX)
+          # 1. 开启 R8 代码压缩与优化 (7 DEX -> 3 DEX)
           GRADLE_FILE="app/build.gradle.kts"
-          if [ -f "$GRADLE_FILE" ]; then
-            sed -i '/release {/,/}/s/isMinifyEnabled = false/isMinifyEnabled = true/' "$GRADLE_FILE"
-            sed -i '/release {/,/}/s/isShrinkResources = false/isShrinkResources = true/' "$GRADLE_FILE"
-            echo "[OK] Enabled R8 Minify & Shrink"
-          fi
+          sed -i '/release {/,/}/s/isMinifyEnabled = false/isMinifyEnabled = true/' "$GRADLE_FILE"
+          sed -i '/release {/,/}/s/isShrinkResources = false/isShrinkResources = true/' "$GRADLE_FILE"
 
-          # 2. 修改 ChatService.kt：强制进入技能加载入口 (后端逻辑)
-          CHAT_FILE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
-          if [ -f "$CHAT_FILE" ]; then
-            sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "$CHAT_FILE"
-            echo "[OK] Patched ChatService.kt"
-          fi
+          # 2. 深度移除 Firebase 引用
+          find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
+          find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} +
+          find app/src/main/java -name "*.kt" -exec sed -i 's/, analytics: FirebaseAnalytics//g' {} +
+          find app/src/main/java -name "*.kt" -exec sed -i 's/analytics: FirebaseAnalytics,//g' {} +
+          find app/src/main/java -name "*.kt" -exec sed -i 's/private val analytics: FirebaseAnalytics//g' {} +
+          find app/src/main/java -name "*.kt" -exec sed -i '/analytics\.logEvent/d' {} +
+          
+          # 3. 修复 Koin 模块中的 Firebase 注入
+          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/Firebase/d' {} +
+          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec sed -i '/analytics\s*=/d' {} +
+          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/single\s*\{\s*\}//gs' {} +
+          find app/src/main/java/me/rerere/rikkahub/di -name "*.kt" -exec perl -i -0777 -pe 's/viewModel\s*\{\s*\}//gs' {} +
 
-          # 3. 修改 SkillsTools.kt：解除技能过滤限制 (后端逻辑)
-          SKILL_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
-          if [ -f "$SKILL_TOOLS" ]; then
-            sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "$SKILL_TOOLS"
-            echo "[OK] Patched SkillsTools.kt"
-          fi
+          # 4. 强制技能加载入口
+          [ -f "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt" ] && sed -i 's/assistant\.enabledSkills\.isNotEmpty()/true/g' "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
 
-          # 4. 彻底移除 Firebase 依赖和代码
-          echo "=== Removing Firebase ==="
-          sed -i '/id("com\.google\.gms\.google-services")/d' app/build.gradle.kts || true
-          sed -i '/libs\.firebase/d' app/build.gradle.kts || true
-          sed -i '/firebase/d' gradle/libs.versions.toml || true
-          sed -i '/google-services/d' gradle/libs.versions.toml || true
-          sed -i '/libs\.plugins\.google/d' build.gradle.kts || true
-          sed -i '/libs\.plugins\.firebase/d' build.gradle.kts || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/, private val analytics: FirebaseAnalytics//' {} + || true
-          sed -i '/single.*Firebase/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
-          sed -i '/single.*Crashlytics/,/}/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+          # 5. 解除技能过滤限制
+          [ -f "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt" ] && sed -i 's/val available = allSkills\.filter {.*}/val available = allSkills/g' "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
 
-          # 5. 修复“删除两次”Bug：切断自动恢复逻辑 (PreferencesStore.kt)
-          # 针对你提供的源码，直接修改逻辑判断，让默认列表永远“显示”为不缺助理
+          # 6. 修复删除 bug (禁用复活逻辑)
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
-          if [ -f "$PREF_STORE" ]; then
-            # 让 ifEmpty 逻辑失效
-            sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE"
-            # 让 forEach 恢复逻辑执行空循环
-            sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE"
-            echo "[OK]Respawn logic killed safely"
-          fi
+          [ -f "$PREF_STORE" ] && sed -i 's/ifEmpty { DEFAULT_ASSISTANTS }/ifEmpty { emptyList() }/g' "$PREF_STORE"
+          [ -f "$PREF_STORE" ] && sed -i 's/DEFAULT_ASSISTANTS\.forEach/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/g' "$PREF_STORE"
 
-          # 6. 修改 Assistant.kt: 注入 deletable 属性 (模型层)
-          ASSISTANT_MODEL="app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt"
-          if [ -f "$ASSISTANT_MODEL" ]; then
-            sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' "$ASSISTANT_MODEL"
-            echo "[OK] Deletable property injected"
-          fi
+          # 7. 注入 deletable 属性
+          sed -i 's/val allowConversationPromptInjection: Boolean = false/val allowConversationPromptInjection: Boolean = false,\n    val deletable: Boolean = true/g' app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 
-          # 7. 强开助手删除选项 UI (AssistantPage.kt)
-          ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
-          if [ -f "$ASSISTANT_PAGE" ]; then
-            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE"
-            echo "[OK] Delete button unlocked"
-          fi
+          # 8. 强开删除按钮 (AssistantPage)
+          [ -f "app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt" ] && sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
 
-          # 8. 强开技能开关点亮效果 (SkillsPage.kt 视觉层)
+          # 9. 强制技能开关状态
           SKILLS_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/extensions/skills/SkillsPage.kt"
-          if [ -f "$SKILLS_PAGE" ]; then
-            sed -i 's/checked = .*in assistant\.enabledSkills/checked = true/g' "$SKILLS_PAGE"
-            sed -i 's/checked = assistant\.enabledSkills\.contains([^)]*)/checked = true/g' "$SKILLS_PAGE"
-            echo "[OK] UI switches lit up"
-          fi
+          [ -f "$SKILLS_PAGE" ] && sed -i 's/checked = .*\.contains(skill\.name)/checked = true/g' "$SKILLS_PAGE"
 
-          # 9. 修复 baselineprofile 插件版本冲突
-          BASELINE_FILE="app/baselineprofile/build.gradle.kts"
-          if [ -f "$BASELINE_FILE" ]; then
-            sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' "$BASELINE_FILE"
-          fi
+          # 10. BaselineProfile 修复
+          [ -f "app/baselineprofile/build.gradle.kts" ] && sed -i 's/id("com.android.test") version "[^"]*"/id("com.android.test")/' app/baselineprofile/build.gradle.kts
           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
 
-          # 10. 技能包塞进 assets
+          # 11. 技能资产注入
           mkdir -p app/src/main/assets/skills
           [ -d "mod/skills" ] && cp -r mod/skills/* app/src/main/assets/skills/
+          [ -f "mod/BundledSkillInstaller.java" ] && cp mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
+          [ -f "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt" ] && sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
 
-          # 11. 复制 BundledSkillInstaller.java
-          INSTALLER_PATH="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
-          if [ -f "mod/BundledSkillInstaller.java" ]; then
-            mkdir -p app/src/main/java/me/rerere/rikkahub
-            cp mod/BundledSkillInstaller.java "$INSTALLER_PATH"
-          fi
-
-          # 12. 改 RikkaHubApp.kt：插入 install 调用
-          APP_FILE="app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
-          [ -f "$APP_FILE" ] && sed -i '/super\.onCreate()/a \        me.rerere.rikkahub.BundledSkillInstaller.install(this)' "$APP_FILE"
-
-          # 13. 综合 Proguard Keep 规则
-          cat >> app/proguard-rules.pro <<EOF
+          # 12. Proguard 规则
+          cat > app/proguard-rules.pro <<EOF
           -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
           -keep class me.rerere.rikkahub.data.files.SkillMetadata { *; }
           -keep class me.rerere.rikkahub.data.model.Assistant { *; }
           -keepclassmembers class me.rerere.rikkahub.data.model.Assistant { *; }
           EOF
-
-          echo "=== All 13 Mod steps applied successfully ==="
-          echo "=== Checking Firebase leftovers ==="
-          grep -R "Firebase\|analytics =" app/src/main/java || true
 
       - name: Build Release APK
         run: |
@@ -198,4 +154,4 @@ jobs:
           body: |
             自动每日构建 `${{ github.sha }}`
             Mod: 内置 skills + 强制启用全部技能 + 强开助手删除按钮 (含 DEX 精简合并)
-          files: app/build/outputs/apk/release/*.apk/apk/release/*.apk
+          files: app/build/outputs/apk/release/app-release.apk
