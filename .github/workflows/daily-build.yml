@@ -186,22 +186,17 @@ jobs:
             echo "[OK] Injected 'deletable' property into Assistant.kt"
           fi
 
-          # 11. 全局解开助手的删除按钮 UI 限制 (修复针对自带助手的过滤)
+          # 11. 强开助手删除功能 (精准版)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
           if [ -f "$ASSISTANT_PAGE" ]; then
-            # 破除自带助手 protection 逻辑（匹配 !in 语法及 .contains）
-            sed -i 's/assistant\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/it\.id !in [A-Za-z0-9_().]*/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/!DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/true/g' "$ASSISTANT_PAGE" || true
-            sed -i 's/DEFAULT_ASSISTANTS_IDS\.contains([^)]*)/false/g' "$ASSISTANT_PAGE" || true
-            echo "[OK] Force-unlocked Delete option in AssistantPage.kt"
-          fi
+            # 仅针对 ActionSheet 的删除逻辑进行精准替换，不误伤其他页面
+            # 匹配原有的 if (assistant.id !in DEFAULT_ASSISTANTS_IDS) {
+            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS) {/if (true) {/g' "$ASSISTANT_PAGE"
 
-          # 解锁常规 deletable 及 当前选中助手 限制
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/it\.deletable/true/g' {} + || true
-          find app/src/main/java -type f -name "*.kt" -exec sed -i 's/assistant\.deletable/true/g' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/assistant\.id != settings\.assistantId/true/g' {} + || true
-          find app/src/main/java/me/rerere/rikkahub/ui -type f -name "*.kt" -exec sed -i 's/it\.id != settings\.assistantId/true/g' {} + || true
+            # 同时将任何可能的 !in 判断转换为 true，确保万无一失
+            sed -i 's/assistant\.id !in DEFAULT_ASSISTANTS_IDS/true/g' "$ASSISTANT_PAGE"
+            echo "[OK] Patched AssistantPage.kt: Force-enabled Delete for all assistants"
+          fi
 
           # 12. 保证修改过的数据类在 R8 下不被破坏
           echo "-keep class me.rerere.rikkahub.data.model.Assistant { *; }" >> app/proguard-rules.pro
