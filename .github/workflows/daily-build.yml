@@ -345,11 +345,31 @@ jobs:
                                           )
                                       )
           """
-          if old not in text:
+          import re
+
+          pattern = r'''put\(
+          \s*key\s*=\s*"parameters",
+          \s*element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
+          \s*\.removeElements\(
+          \s*listOf\(
+          \s*"const",
+          \s*"exclusiveMaximum",
+          \s*"exclusiveMinimum",
+          \s*"format",
+          \s*"additionalProperties",
+          \s*"enum",
+          \s*\)
+          \s*\)
+          \s*\)'''
+
+          match = re.search(pattern, text)
+
+          if not match:
               raise SystemExit(
-                  "Target parameters block not found. Upstream may already changed."
+                  "Gemini parameters block not found"
               )
-          text = text.replace(old, new, 1)
+
+          text = text[:match.start()] + new.strip() + text[match.end():]
           marker = """
                   private fun commonRoleToGoogleRole(role: MessageRole): String {
           """
