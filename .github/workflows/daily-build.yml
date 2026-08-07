@@ -174,7 +174,6 @@ jobs:
               flags=re.S | re.X
           )
 
-
           # 4. buildTypes 中的删除与增加
           content = re.sub(
               r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)',
@@ -187,23 +186,53 @@ jobs:
               content
           )
           # 强制开启混淆和资源压缩
-          content = re.sub(
-              r'isMinifyEnabled\s*=\s*(true|false)',
-              'isMinifyEnabled = true',
-              content
-          )
-          content = re.sub(
-              r'isShrinkResources\s*=\s*(true|false)',
-              'isShrinkResources = true',
-              content
-          )
-          # 如果不存在则插入 release
-          if "isMinifyEnabled" not in content:
+          if "isMinifyEnabled =" in content:
               content = re.sub(
-                  r'(release\s*\{)',
-                  r'\1\n isMinifyEnabled = true\n isShrinkResources = true',
+                  r'isMinifyEnabled\s*=\s*(true|false)',
+                  'isMinifyEnabled = true',
                   content
               )
+          else:
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n            isMinifyEnabled = true',
+                  content,
+                  count=1
+              )
+
+          if "isShrinkResources =" in content:
+              content = re.sub(
+                  r'isShrinkResources\s*=\s*(true|false)',
+                  'isShrinkResources = true',
+                  content
+              )
+          else:
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n            isShrinkResources = true',
+                  content,
+                  count=1
+              )
+
+          # 添加 proguardFiles（不存在才添加）
+          if "proguardFiles(" not in content:
+              print("[INFO] Adding proguardFiles")
+
+              proguard_block = '''
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+'''
+
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n' + proguard_block,
+                  content,
+                  count=1
+              )
+          else:
+              print("[OK] proguardFiles already exists")
           # 5. sourceSets 整段删除
           content = re.sub(
               r'''
@@ -343,7 +372,8 @@ jobs:
 
           touch app/proguard-rules.pro
 
-          cat >> app/proguard-rules.pro <<'EOF'
+          grep -q "BundledSkillInstaller" app/proguard-rules.pro || cat >> app/proguard-rules.pro <<'EOF'
+
           # ===========================
           # Bundled Skills Installer
           # ===========================
@@ -363,7 +393,6 @@ jobs:
           -keepnames class me.rerere.rikkahub.BundledSkillInstaller
 
 
-          # 保留 Application 调用入口
           -keep class me.rerere.rikkahub.RikkaHubApp {
               *;
           }
@@ -371,6 +400,7 @@ jobs:
           -keepclassmembers class me.rerere.rikkahub.RikkaHubApp {
               *;
           }
+
           EOF
 
           echo "=== Verify Proguard Rules ==="
