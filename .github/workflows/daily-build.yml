@@ -298,26 +298,7 @@ jobs:
                   print("[WARN] DEFAULT_ASSISTANTS pattern not found in PreferencesStore.kt")
           PYEOF
 
-          echo "=== Enable MCP Default ==="
-          python3 << 'PYEOF'
-          from pathlib import Path
-          import re
-
-          for path in Path("app/src/main/java").rglob("*.kt"):
-              text = path.read_text(encoding="utf-8")
-              if "mcp" in text.lower() and "enabled" in text.lower():
-                  print("[CHECK]", path)
-                  # 常见默认 false 改 true
-                  text2 = re.sub(
-                      r'(mcp\w*Enabled\s*=\s*)false',
-                      r'\1true',
-                      text
-                  )
-                  if text2 != text:
-                      path.write_text(text2, encoding="utf-8")
-                      print("[PATCH MCP]", path)
-          PYEOF
-
+          
           echo "=== Add R8 Keep Rules ==="
           touch app/proguard-rules.pro
           if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
