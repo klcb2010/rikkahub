@@ -41,7 +41,7 @@ jobs:
           # 尝试合并上游 master/main
           UPSTREAM_BRANCH="upstream/master"
           git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || UPSTREAM_BRANCH="upstream/main"
-          
+
           git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours
           echo "=== Restoring protected files ==="
           [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && cp /tmp/protected_backup/.github/workflows/daily-build.yml .github/workflows/daily-build.yml || true
@@ -173,8 +173,8 @@ jobs:
               content,
               flags=re.S | re.X
           )
-          
-          
+
+
           # 4. buildTypes 中的删除与增加
           content = re.sub(
               r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)',
@@ -229,7 +229,7 @@ jobs:
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-          
+
           # 针对 DI 模块和 ChatVM 彻底清除 analytics 行
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
@@ -268,7 +268,7 @@ jobs:
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
             cp -f mod/BundledSkillInstaller.java \
-            app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
+              app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
             echo "[OK] BundledSkillInstaller copied"
           else
             echo "[WARN] BundledSkillInstaller missing"
@@ -338,57 +338,52 @@ jobs:
           print("[OK] ChatService patched")
           EOF
           fi
+
           echo "=== Add R8 Keep Rules ==="
 
           touch app/proguard-rules.pro
 
-                    echo "=== Add R8 Keep Rules ==="
-
-          touch app/proguard-rules.pro
-
           cat >> app/proguard-rules.pro <<'EOF'
+          # ===========================
+          # Bundled Skills Installer
+          # ===========================
 
-# ===========================
-# Bundled Skills Installer
-# ===========================
+          -keep class me.rerere.rikkahub.BundledSkillInstaller {
+              *;
+          }
 
--keep class me.rerere.rikkahub.BundledSkillInstaller {
-    *;
-}
+          -keep class me.rerere.rikkahub.BundledSkillInstaller$* {
+              *;
+          }
 
--keep class me.rerere.rikkahub.BundledSkillInstaller$* {
-    *;
-}
+          -keepclassmembers class me.rerere.rikkahub.BundledSkillInstaller {
+              *;
+          }
 
--keepclassmembers class me.rerere.rikkahub.BundledSkillInstaller {
-    *;
-}
-
--keepnames class me.rerere.rikkahub.BundledSkillInstaller
-
-
-# 保留 Application 调用入口
--keep class me.rerere.rikkahub.RikkaHubApp {
-    *;
-}
-
--keepclassmembers class me.rerere.rikkahub.RikkaHubApp {
-    *;
-}
-
-EOF
+          -keepnames class me.rerere.rikkahub.BundledSkillInstaller
 
 
-echo "=== Verify Proguard Rules ==="
+          # 保留 Application 调用入口
+          -keep class me.rerere.rikkahub.RikkaHubApp {
+              *;
+          }
 
-grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
+          -keepclassmembers class me.rerere.rikkahub.RikkaHubApp {
+              *;
+          }
+          EOF
+
+          echo "=== Verify Proguard Rules ==="
+
+          grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
           echo "=== Verify Installer Injection ==="
 
           grep -R "BundledSkillInstaller.install" \
-          app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
+            app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
 
           echo "=== BundledSkillInstaller Patch Done ==="
+
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -403,6 +398,7 @@ grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
           echo "=== Check Proguard ==="
 
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
+
       # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
