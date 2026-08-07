@@ -3,8 +3,10 @@ on:
   schedule:
     - cron: '0 18 * * *'
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   sync-and-build:
     runs-on: ubuntu-latest
@@ -14,10 +16,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
       - name: Configure Git Identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       # Step 1: 备份保护文件，同步上游仓库并还原保护文件
       - name: Sync Upstream with Protected Files
         id: sync
@@ -37,7 +41,7 @@ jobs:
           # 尝试合并上游 master/main
           UPSTREAM_BRANCH="upstream/master"
           git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || UPSTREAM_BRANCH="upstream/main"
-         
+          
           git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours
           echo "=== Restoring protected files ==="
           [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && cp /tmp/protected_backup/.github/workflows/daily-build.yml .github/workflows/daily-build.yml || true
@@ -58,6 +62,7 @@ jobs:
             echo "No new changes from upstream merge."
             echo "has_sync_changes=false" >> $GITHUB_OUTPUT
           fi
+
       # Step 2: 获取版本号与 Tag 判定
       - name: Extract Version Name & Check Tag
         id: version
@@ -78,6 +83,7 @@ jobs:
             echo "tag_exists=false" >> $GITHUB_OUTPUT
             echo "New Tag ${TAG_NAME} will be created."
           fi
+
       # Step 3: 确定是否继续编译 (如无更新且标签已存在，且非手动触发则跳过)
       - name: Check Should Build
         id: check_build
@@ -90,6 +96,7 @@ jobs:
             echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "无新提交且版本号标签未更新，跳过构建。"
           fi
+
       # ---- 如果需要构建，进入构建准备环境 ----
       - name: Set up JDK 17
         if: steps.check_build.outputs.should_build == 'true'
@@ -97,11 +104,13 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+
       - name: Set up pnpm
         if: steps.check_build.outputs.should_build == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 11
+
       - name: Set up Node 22
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/setup-node@v4
@@ -109,10 +118,12 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web-ui/pnpm-lock.yaml
+
       - name: Install web-ui dependencies
         if: steps.check_build.outputs.should_build == 'true'
         working-directory: web-ui
         run: pnpm install --frozen-lockfile
+
       - name: Gradle cache
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/cache@v4
@@ -121,6 +132,7 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
       # Step 4: 移除 BaselineProfile 模块
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
@@ -131,6 +143,7 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
+
       # Step 5: 修改 app/build.gradle.kts 与注入 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
@@ -160,8 +173,8 @@ jobs:
               content,
               flags=re.S | re.X
           )
-         
-         
+          
+          
           # 4. buildTypes 中的删除与增加
           content = re.sub(
               r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)',
@@ -216,7 +229,7 @@ jobs:
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} +
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-         
+          
           # 针对 DI 模块和 ChatVM 彻底清除 analytics 行
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
@@ -325,134 +338,37 @@ jobs:
           print("[OK] ChatService patched")
           EOF
           fi
-          echo "=== Patch BundledSkillInstaller ==="
-          INSTALLER="app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
-          if [ -f "$INSTALLER" ]; then
-            python3 <<'EOF'
-          from pathlib import Path
-          path=Path(
-          "app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java"
-          )
-          text=path.read_text(encoding="utf-8")
-          text=text.replace(
-          '''
-          if (file.exists()) {
-                      return;
-                  }
-          ''',
-          '''
-          if (file.exists() && file.isFile()) {
-                      return;
-                  }
-          '''
-          )
-          text=text.replace(
-          'getInt("installed_version", 0) < 1',
-          'getInt("installed_version", 0) < 2'
-          )
-          text=text.replace(
-          'putInt("installed_version", 1)',
-          'putInt("installed_version", 2)'
-          )
-          path.write_text(text,encoding="utf-8")
-          print("[OK] Installer patched")
-          EOF
-          fi
-           echo "=== Patch BundledSkillInstaller ==="
-
-
-          ####################################
-          # 1. Add R8 keep rules
-          ####################################
+          echo "=== Add R8 Keep Rules ==="
 
           touch app/proguard-rules.pro
 
           cat >> app/proguard-rules.pro <<'EOF'
 
-     # ===========================
-      # Bundled Skill Installer
-      # ===========================
+          # ===========================
+          # Bundled Skill Installer
+          # ===========================
 
-         -keep class me.rerere.rikkahub.BundledSkillInstaller {
-         public static *;
+          -keep class me.rerere.rikkahub.BundledSkillInstaller {
+              public static void copyDir(...);
+              public static void install(...);
           }
 
-         EOF
+          EOF
 
+          echo "=== Verify Installer Injection ==="
 
-          ####################################
-          # 2. Inject install call
-          ####################################
-
-
-          APP_FILE=$(find app/src/main/java -name "RikkaHubApp.java" | head -n 1)
-
-
-          if [ -z "$APP_FILE" ]; then
-              echo "ERROR: RikkaHubApp.java not found"
-              exit 1
-          fi
-
-
-          echo "Found:"
-          echo "$APP_FILE"
-
-
-
-          python3 <<PY
-
-       from pathlib import Path
-
-     p = Path("$APP_FILE")
-
-   text = p.read_text()
-
-
-   inject = "BundledSkillInstaller.install(this);"
-
-
-     if inject in text:
-      print("Already injected")
-
-    else:
-
-   图  old = "super.onCreate();"
-
-
-    if old not in text:
-        raise Exception("super.onCreate() not found")
-
-
-         text = text.replace(
-        old,
-        old + "\\n\\n        " + inject,
-        1
-         )
-
-
-         p.write_text(text)
-
-        print("Injected successfully")
-
-
-      PY
-
-
-
-          ####################################
-          # 3. Verify
-          ####################################
-
-          grep -n "BundledSkillInstaller.install" "$APP_FILE" || true
-
+          grep -R "BundledSkillInstaller.install" \
+          app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
 
           echo "=== BundledSkillInstaller Patch Done ==="
-               # Step 6: 编译未签名 Release APK
+
+      # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
+
       # Step 7: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true'
@@ -461,6 +377,7 @@ jobs:
           git tag "$TAG" || true
           git push origin "$TAG" || true
           echo "Tag $TAG pushed."
+
       # Step 8: 发布 Release 并上传未签名 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true'
