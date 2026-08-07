@@ -144,58 +144,62 @@ jobs:
         run: |
           echo "=== 1. Modifying app/build.gradle.kts with Python ==="
           python3 << 'PYEOF'
-          import re
-          gradle_path = "app/build.gradle.kts"
-          with open(gradle_path, "r", encoding="utf-8") as f:
-              content = f.read()
+import re
+gradle_path = "app/build.gradle.kts"
+with open(gradle_path, "r", encoding="utf-8") as f:
+    content = f.read()
 
-          # 1. plugins 删除
-          content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
-          content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
+# 1. plugins 删除
+content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
+content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
 
-          # 2. 删除注释
-          content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
-          content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
+# 2. 删除注释
+content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
+content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
 
-          # 3. signingConfigs 整段删除
-          content = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', content)
+# 3. signingConfigs 整段删除
+content = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', content)
 
-          # 4. buildTypes 清理
-          content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
-          content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
+# 4. buildTypes 清理
+content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
+content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
 
-          # 强制开启混淆
-          if "isMinifyEnabled" in content:
-              content = re.sub(r'isMinifyEnabled\s*=\s*(true|false)', 'isMinifyEnabled = true', content)
-          else:
-              content = re.sub(r'(release\s*\{)', r'\1\n            isMinifyEnabled = true', content, count=1)
+# 强制开启混淆
+if "isMinifyEnabled" in content:
+    content = re.sub(r'isMinifyEnabled\s*=\s*(true|false)', 'isMinifyEnabled = true', content)
+else:
+    content = re.sub(r'(release\s*\{)', r'\1\n            isMinifyEnabled = true', content, count=1)
 
-          if "isShrinkResources" in content:
-              content = re.sub(r'isShrinkResources\s*=\s*(true|false)', 'isShrinkResources = true', content)
-          else:
-              content = re.sub(r'(release\s*\{)', r'\1\n            isShrinkResources = true', content, count=1)
+if "isShrinkResources" in content:
+    content = re.sub(r'isShrinkResources\s*=\s*(true|false)', 'isShrinkResources = true', content)
+else:
+    content = re.sub(r'(release\s*\{)', r'\1\n            isShrinkResources = true', content, count=1)
 
-          # 添加 proguardFiles
-          if "proguardFiles(" not in content:
-              print("[INFO] Adding proguardFiles")
-              proguard_block = '\n            proguardFiles(\n                getDefaultProguardFile("proguard-android-optimize.txt"),\n                "proguard-rules.pro"\n            )'
-              content = re.sub(r'(release\s*\{)', r'\1' + proguard_block, content, count=1)
-          else:
-              print("[OK] proguardFiles already exists")
+# 添加 proguardFiles
+if "proguardFiles(" not in content:
+    print("[INFO] Adding proguardFiles")
+    proguard_block = '''
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )'''
+    content = re.sub(r'(release\s*\{)', r'\1' + proguard_block, content, count=1)
+else:
+    print("[OK] proguardFiles already exists")
 
-          # 5. sourceSets 删除
-          content = re.sub(r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}', '', content)
+# 5. sourceSets 删除
+content = re.sub(r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}', '', content)
 
-          # 6. Firebase 清理
-          content = re.sub(r'\s*// Firebase', '', content)
-          content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
-          content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
-          content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
+# 6. Firebase 清理
+content = re.sub(r'\s*// Firebase', '', content)
+content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
+content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
+content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
 
-          with open(gradle_path, "w", encoding="utf-8") as f:
-              f.write(content)
-          print("[OK] app/build.gradle.kts modified successfully.")
-          PYEOF
+with open(gradle_path, "w", encoding="utf-8") as f:
+    f.write(content)
+print("[OK] app/build.gradle.kts modified successfully.")
+PYEOF
 
           echo "=== 2. Clean Firebase Residues ==="
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
@@ -208,21 +212,23 @@ jobs:
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          echo "=== 3. Unlock Delete Button ==="
-          ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
-          if [ -f "$ASSISTANT_PAGE" ]; then
-            sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS)/if (true)/g' "$ASSISTANT_PAGE" || true
-            echo "[OK] Delete button unlocked"
-          fi
+          echo "=== Unlock Delete Button ==="
+          python3 << 'PYEOF'
+from pathlib import Path
+import re
 
-          echo "=== 4. Fix Assistant Empty List Crash ==="
-          PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
-          if [ -f "$PREF_STORE" ]; then
-            sed -i 's/return this.assistants.find { it.id == assistantId } ?: this.assistants.first()/return this.assistants.find { it.id == assistantId } ?: this.assistants.firstOrNull() ?: Assistant(id = DEFAULT_ASSISTANT_ID, name = "", systemPrompt = "")/' "$PREF_STORE"
-            sed -i 's/it.assistants.ifEmpty { emptyList() }/it.assistants.ifEmpty { DEFAULT_ASSISTANTS }/g' "$PREF_STORE"
-            sed -i 's/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/DEFAULT_ASSISTANTS.forEach/g' "$PREF_STORE"
-            echo "[OK] Assistant fallback restored"
-          fi
+for path in Path("app/src/main/java").rglob("*.kt"):
+    text = path.read_text(encoding="utf-8")
+    if "DEFAULT_ASSISTANTS_IDS" in text:
+        print("[FOUND]", path)
+        text = re.sub(
+            r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
+            'true',
+            text
+        )
+        path.write_text(text, encoding="utf-8")
+        print("[PATCHED]", path)
+PYEOF
 
           echo "=== 5. Copy Builtin Skills & Installer ==="
           mkdir -p app/src/main/assets/skills
@@ -245,85 +251,127 @@ jobs:
 
           echo "=== Inject Installer Into RikkaHubApp ==="
           python3 << 'PYEOF'
-          from pathlib import Path
+from pathlib import Path
+import re
 
-          path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
+path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
+if not path.exists():
+    print("[WARN] RikkaHubApp.kt missing")
+    exit(0)
 
-          if not path.exists():
-              print("[WARN] RikkaHubApp.kt missing")
-              exit(0)
+text = path.read_text(encoding="utf-8")
+call = "        BundledSkillInstaller.install(this)"
+if call in text:
+    print("[OK] installer already exists")
+else:
+    pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
+    if re.search(pattern, text):
+        text = re.sub(
+            pattern,
+            r'\1\n\n' + call,
+            text,
+            count=1
+        )
+        path.write_text(text, encoding="utf-8")
+        print("[OK] installer injected")
+    else:
+        print("[WARN] onCreate marker not found")
+PYEOF
 
-          text = path.read_text(encoding="utf-8")
+          echo "=== Disable Default Assistant Auto Restore ==="
+          python3 << 'PYEOF'
+from pathlib import Path
+import re
 
-          call = "    BundledSkillInstaller.install(this)"
+for path in Path("app/src/main/java").rglob("*.kt"):
+    text = path.read_text(encoding="utf-8")
+    pattern = r"""val assistants = it\.assistants\.ifEmpty \{ DEFAULT_ASSISTANTS \}\.toMutableList\(\)
+\s*DEFAULT_ASSISTANTS\.forEach \{ defaultAssistant ->
+\s*if \(assistants\.none \{ it\.id == defaultAssistant\.id \} \) \{
+\s*assistants\.add\(defaultAssistant\.copy\(\)\)
+\s*\}
+\s*\}"""
+    if re.search(pattern, text):
+        print("[FOUND]", path)
+        text = re.sub(
+            pattern,
+            "val assistants = it.assistants.toMutableList()",
+            text
+        )
+        path.write_text(text, encoding="utf-8")
+        print("[PATCHED]", path)
+PYEOF
 
-          if call in text:
-              print("[OK] installer already exists")
-          else:
-              marker = "override fun onCreate() {\n        super.onCreate()"
+          echo "=== Fix Empty Assistant Crash ==="
+          python3 << 'PYEOF'
+from pathlib import Path
 
-              if marker in text:
-                  text = text.replace(
-                      marker,
-                      marker + "\n\n" + call,
-                      1
-                  )
-                  path.write_text(text, encoding="utf-8")
-                  print("[OK] installer injected after super.onCreate")
-              else:
-                  print("[WARN] onCreate marker not found")
-          PYEOF
+for path in Path("app/src/main/java").rglob("*.kt"):
+    text = path.read_text(encoding="utf-8")
+    old = """fun Settings.getCurrentAssistant(): Assistant {
+    return this.assistants.find { it.id == assistantId } ?: this.assistants.first()
+}"""
+    new = """fun Settings.getCurrentAssistant(): Assistant {
+    return this.assistants.find { it.id == assistantId }
+        ?: this.assistants.firstOrNull()
+        ?: Assistant(
+            id = DEFAULT_ASSISTANT_ID,
+            name = "",
+            systemPrompt = ""
+        )
+}"""
+    if old in text:
+        print("[PATCHED]", path)
+        text = text.replace(old, new)
+        path.write_text(text, encoding="utf-8")
+PYEOF
 
           echo "=== Patch SkillsTools.kt ==="
           SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
           if [ -f "$SKILLS_TOOLS" ]; then
             python3 << 'PYEOF'
-          from pathlib import Path
-          path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
-          text = path.read_text(encoding="utf-8")
-          old = "val available = allSkills.filter { it.name in enabledSkills }"
-          if old in text:
-              text = text.replace(old, "val available = allSkills")
-              print("[OK] SkillsTools patched")
-          else:
-              print("[WARN] SkillsTools target not found")
-          path.write_text(text, encoding="utf-8")
-          PYEOF
+from pathlib import Path
+path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
+text = path.read_text(encoding="utf-8")
+old = "val available = allSkills.filter { it.name in enabledSkills }"
+if old in text:
+    text = text.replace(old, "val available = allSkills")
+    path.write_text(text, encoding="utf-8")
+    print("[OK] SkillsTools patched")
+else:
+    print("[WARN] SkillsTools target not found")
+PYEOF
           fi
 
           echo "=== Patch ChatService ==="
           CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
           if [ -f "$CHAT_SERVICE" ]; then
             python3 << 'PYEOF'
-          from pathlib import Path
-          path = Path("app/src/main/java/me/rerere/rikkahub/service/ChatService.kt")
-          text = path.read_text(encoding="utf-8")
-          text = text.replace("assistant.enabledSkills.isNotEmpty()", "true")
-          path.write_text(text, encoding="utf-8")
-          print("[OK] ChatService patched")
-          PYEOF
+from pathlib import Path
+path = Path("app/src/main/java/me/rerere/rikkahub/service/ChatService.kt")
+text = path.read_text(encoding="utf-8")
+text = text.replace("assistant.enabledSkills.isNotEmpty()", "true")
+path.write_text(text, encoding="utf-8")
+print("[OK] ChatService patched")
+PYEOF
           fi
 
           echo "=== Add R8 Keep Rules ==="
           touch app/proguard-rules.pro
           if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
             cat >> app/proguard-rules.pro << 'RULESEOF'
-
-          # ===========================
-          # Bundled Skills Installer
-          # ===========================
-          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
-          -keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
-          -keepclassmembers class me.rerere.rikkahub.BundledSkillInstaller { *; }
-          -keepnames class me.rerere.rikkahub.BundledSkillInstaller
-          -keep class me.rerere.rikkahub.RikkaHubApp { *; }
-          -keepclassmembers class me.rerere.rikkahub.RikkaHubApp { *; }
-          RULESEOF
+# ===========================
+# Bundled Skills Installer
+# ===========================
+-keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
+-keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
+-keep class me.rerere.rikkahub.RikkaHubApp { *; }
+-keep class me.rerere.rikkahub.data.ai.tools.** { *; }
+RULESEOF
           fi
 
           echo "=== Verify Proguard Rules ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
-
           echo "=== Verify Installer Injection ==="
           grep -R "BundledSkillInstaller.install" app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
@@ -367,3 +415,4 @@ jobs:
             自动同步构建版 `${{ steps.version.outputs.version_name }}`
             Commit: `${{ github.sha }}`
           files: app/build/outputs/apk/release/*.apk
+
