@@ -154,24 +154,20 @@ jobs:
           gradle_path = "app/build.gradle.kts"
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
+
           # 1. plugins 中的删除
           content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
           content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
+
           # 2. splits 中的删除注释
           content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
           content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
+
           # 3. signingConfigs 整段删除
           content = re.sub(
-              r'''
-              \n\s*signingConfigs\s*\{
-                  \s*create\("release"\)\s*\{
-                      .*?
-                  \}
-              \s*\}
-              ''',
+              r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
               '',
-              content,
-              flags=re.S | re.X
+              content
           )
 
           # 4. buildTypes 中的删除与增加
@@ -185,6 +181,7 @@ jobs:
               '',
               content
           )
+
           # 强制开启混淆和资源压缩
           if "isMinifyEnabled =" in content:
               content = re.sub(
@@ -214,7 +211,7 @@ jobs:
                   count=1
               )
 
-                    # 添加 proguardFiles（不存在才添加）
+          # 添加 proguardFiles（不存在才添加）
           if "proguardFiles(" not in content:
               print("[INFO] Adding proguardFiles")
               proguard_block = '''
@@ -222,7 +219,7 @@ jobs:
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-
+'''
               content = re.sub(
                   r'(release\s*\{)',
                   r'\1\n' + proguard_block,
@@ -231,22 +228,20 @@ jobs:
               )
           else:
               print("[OK] proguardFiles already exists")
+
           # 5. sourceSets 整段删除
           content = re.sub(
-              r'''
-              \n\s*sourceSets\s*\{
-                  \s*getByName\("androidTest"\)\.assets\.srcDirs\([^\)]*\)
-              \s*\}
-              ''',
+              r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}',
               '',
-              content,
-              flags=re.S | re.X
+              content
           )
+
           # 6. // Firebase 整段删除
           content = re.sub(r'\s*// Firebase', '', content)
           content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
           content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
           content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
+
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(content)
           print("[OK] app/build.gradle.kts modified successfully.")
