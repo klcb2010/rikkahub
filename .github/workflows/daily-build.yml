@@ -214,16 +214,14 @@ jobs:
                   count=1
               )
 
-          # 添加 proguardFiles（不存在才添加）
+                    # 添加 proguardFiles（不存在才添加）
           if "proguardFiles(" not in content:
               print("[INFO] Adding proguardFiles")
-
               proguard_block = '''
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-'''
 
               content = re.sub(
                   r'(release\s*\{)',
@@ -253,6 +251,7 @@ jobs:
               f.write(content)
           print("[OK] app/build.gradle.kts modified successfully.")
           EOF
+
           echo "=== 2. Clean Firebase Residues ==="
           # 清除源码中的 Firebase 与 analytics 引用
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} +
@@ -266,6 +265,7 @@ jobs:
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
+
           echo "=== 3. Unlock Delete Button ==="
           # 强开删除按钮 UI 显示 (破解 !in DEFAULT_ASSISTANTS_IDS 判定)
           ASSISTANT_PAGE="app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
@@ -273,6 +273,7 @@ jobs:
             sed -i 's/if (assistant\.id !in DEFAULT_ASSISTANTS_IDS)/if (true)/g' "$ASSISTANT_PAGE" || true
             echo "[OK] Delete button unlocked in AssistantPage.kt"
           fi
+
           echo "=== 4. Fix Assistant Empty List Crash ==="
           PREF_STORE="app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
           if [ -f "$PREF_STORE" ]; then
@@ -284,6 +285,7 @@ jobs:
             sed -i 's/emptyList<me.rerere.rikkahub.data.model.Assistant>().forEach/DEFAULT_ASSISTANTS.forEach/g' "$PREF_STORE"
             echo "[OK] Assistant fallback restored"
           fi
+
           echo "=== 5. Copy Builtin Skills & Installer ==="
           mkdir -p app/src/main/assets/skills
           if [ -d "mod/skills" ]; then
@@ -293,6 +295,7 @@ jobs:
           else
             echo "[WARN] mod/skills missing"
           fi
+
           echo "=== Copy BundledSkillInstaller ==="
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
@@ -302,11 +305,12 @@ jobs:
           else
             echo "[WARN] BundledSkillInstaller missing"
           fi
+
           echo "=== Inject Installer Into RikkaHubApp ==="
           python3 <<'EOF'
           from pathlib import Path
           path = Path(
-          "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+              "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
           )
           if path.exists():
               text = path.read_text(encoding="utf-8")
@@ -319,59 +323,59 @@ jobs:
                   BundledSkillInstaller.install(this)
           """
                   if old in text:
-                      text=text.replace(old,new,1)
+                      text = text.replace(old, new, 1)
                       print("[OK] installer injected after Koin")
                   else:
                       print("[WARN] injection point not found")
               else:
                   print("[OK] installer already exists")
-              path.write_text(text,encoding="utf-8")
+              path.write_text(text, encoding="utf-8")
           else:
               print("[WARN] RikkaHubApp.kt missing")
           EOF
+
           echo "=== Patch SkillsTools.kt ==="
           SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
           if [ -f "$SKILLS_TOOLS" ]; then
             python3 <<'EOF'
           from pathlib import Path
-          path=Path(
-          "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
+          path = Path(
+              "app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
           )
-          text=path.read_text(encoding="utf-8")
-          old="val available = allSkills.filter { it.name in enabledSkills }"
+          text = path.read_text(encoding="utf-8")
+          old = "val available = allSkills.filter { it.name in enabledSkills }"
           if old in text:
-              text=text.replace(
+              text = text.replace(
                   old,
                   "val available = allSkills"
               )
               print("[OK] SkillsTools patched")
           else:
               print("[WARN] SkillsTools target not found")
-          path.write_text(text,encoding="utf-8")
+          path.write_text(text, encoding="utf-8")
           EOF
           fi
+
           echo "=== Patch ChatService ==="
           CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
           if [ -f "$CHAT_SERVICE" ]; then
             python3 <<'EOF'
           from pathlib import Path
-          path=Path(
-          "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
+          path = Path(
+              "app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
           )
-          text=path.read_text(encoding="utf-8")
-          text=text.replace(
-          "assistant.enabledSkills.isNotEmpty()",
-          "true"
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "assistant.enabledSkills.isNotEmpty()",
+              "true"
           )
-          path.write_text(text,encoding="utf-8")
+          path.write_text(text, encoding="utf-8")
           print("[OK] ChatService patched")
           EOF
           fi
 
           echo "=== Add R8 Keep Rules ==="
-
           touch app/proguard-rules.pro
-
           grep -q "BundledSkillInstaller" app/proguard-rules.pro || cat >> app/proguard-rules.pro <<'EOF'
 
           # ===========================
@@ -404,11 +408,9 @@ jobs:
           EOF
 
           echo "=== Verify Proguard Rules ==="
-
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
           echo "=== Verify Installer Injection ==="
-
           grep -R "BundledSkillInstaller.install" \
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
 
@@ -418,15 +420,12 @@ jobs:
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           echo "=== Check Java Source ==="
-
           grep -R "class BundledSkillInstaller" app/src/main/java || true
 
           echo "=== Check Install Call ==="
-
           grep -R "BundledSkillInstaller.install" app/src/main/java || true
 
           echo "=== Check Proguard ==="
-
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
       # Step 6: 编译未签名 Release APK
