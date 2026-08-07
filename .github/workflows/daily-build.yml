@@ -389,7 +389,20 @@ grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
           app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
 
           echo "=== BundledSkillInstaller Patch Done ==="
+      - name: Verify Installer Before Build
+        if: steps.check_build.outputs.should_build == 'true'
+        run: |
+          echo "=== Check Java Source ==="
 
+          grep -R "class BundledSkillInstaller" app/src/main/java || true
+
+          echo "=== Check Install Call ==="
+
+          grep -R "BundledSkillInstaller.install" app/src/main/java || true
+
+          echo "=== Check Proguard ==="
+
+          grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
       # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
