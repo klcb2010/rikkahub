@@ -293,7 +293,7 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
-      # Step 5.5: Patch Gemini MCP function schema compatibility
+      # Step 5.5: Patch Gemini MCP schema compatibility
       - name: Patch Gemini MCP schema compatibility
         if: steps.check_build.outputs.should_build == 'true'
         shell: bash
@@ -309,89 +309,87 @@ jobs:
           fi
           python3 <<'PYEOF'
           from pathlib import Path
-          path = Path(
-              "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
-          )
+          path = Path("ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt")
           text = path.read_text(encoding="utf-8")
-          old = '''
-                                put(
-                                    key = "parameters",
-                                    element = json.encodeToJsonElement(tool.parameters())
-                                        .removeElements(
-                                            listOf(
-                                                "const",
-                                                "exclusiveMaximum",
-                                                "exclusiveMinimum",
-                                                "format",
-                                                "additionalProperties",
-                                                "enum",
-                                            )
-                                        )
-                                )
-          '''
-          new = '''
-                                put(
-                                    key = "parameters",
-                                    element = sanitizeGeminiSchema(
-                                        json.encodeToJsonElement(tool.parameters())
-                                            .removeElements(
-                                                listOf(
-                                                    "const",
-                                                    "exclusiveMaximum",
-                                                    "exclusiveMinimum",
-                                                    "format",
-                                                    "additionalProperties",
-                                                    "enum",
-                                                )
-                                            )
-                                    )
-                                )
-          '''
+          old = """
+                                      put(
+                                          key = "parameters",
+                                          element = json.encodeToJsonElement(tool.parameters())
+                                              .removeElements(
+                                                  listOf(
+                                                      "const",
+                                                      "exclusiveMaximum",
+                                                      "exclusiveMinimum",
+                                                      "format",
+                                                      "additionalProperties",
+                                                      "enum",
+                                                  )
+                                              )
+                                      )
+          """
+          new = """
+                                      put(
+                                          key = "parameters",
+                                          element = sanitizeGeminiSchema(
+                                              json.encodeToJsonElement(tool.parameters())
+                                                  .removeElements(
+                                                      listOf(
+                                                          "const",
+                                                          "exclusiveMaximum",
+                                                          "exclusiveMinimum",
+                                                          "format",
+                                                          "additionalProperties",
+                                                          "enum",
+                                                      )
+                                                  )
+                                          )
+                                      )
+          """
           if old not in text:
               raise SystemExit(
                   "Target parameters block not found. Upstream may already changed."
               )
           text = text.replace(old, new, 1)
-          marker = '''
-            private fun commonRoleToGoogleRole(role: MessageRole): String {
-            '''
-            inject = r'''
-            private fun sanitizeGeminiSchema(
-            element: kotlinx.serialization.json.JsonElement
-            ): kotlinx.serialization.json.JsonElement {
-                return when (element) {
-            is JsonObject -> {
-                val map = element.toMutableMap()
-                val type =
-                    map["type"]?.jsonPrimitive?.contentOrNull
-                if (
-                    type == "array" &&
-                    !map.containsKey("items")
-                ) {
-                    map["items"] =
-                        buildJsonObject {
-                            put(
-                                "type",
-                                "string"
-                            )
-                        }
-                }
-                map.forEach { (key, value) ->
-                    map[key] = sanitizeGeminiSchema(value)
-                }
-                JsonObject(map)
-            }
-            is JsonArray -> {
-                JsonArray(
-                    element.map {
-                        sanitizeGeminiSchema(it)
-                    }
-                )
-            }
-            else -> element
-             }
-            }
-            '''
+          marker = """
+                  private fun commonRoleToGoogleRole(role: MessageRole): String {
+          """
+          inject = """
+                  private fun sanitizeGeminiSchema(
+                      element: kotlinx.serialization.json.JsonElement
+                  ): kotlinx.serialization.json.JsonElement {
+                      return when (element) {
+                          is JsonObject -> {
+                              val map = element.toMutableMap()
+                              val type =
+                                  map["type"]?.jsonPrimitive?.contentOrNull
+                              if (
+                                  type == "array" &&
+                                  !map.containsKey("items")
+                              ) {
+                                  map["items"] =
+                                      buildJsonObject {
+                                          put(
+                                              "type",
+                                              "string"
+                                          )
+                                      }
+                              }
+                              map.forEach { (key, value) ->
+                                  map[key] = sanitizeGeminiSchema(value)
+                              }
+                              JsonObject(map)
+                          }
+                          is JsonArray -> {
+                              JsonArray(
+                                  element.map {
+                                      sanitizeGeminiSchema(it)
+                                  }
+                              )
+                          }
+                          else -> element
+                      }
+                  }
+          """
           if marker not in text:
               raise SystemExit(
                   "Injection marker not found"
@@ -405,9 +403,7 @@ jobs:
               text,
               encoding="utf-8"
           )
-          print(
-              "Gemini schema sanitizer injected"
-          )
+          print("Gemini schema sanitizer injected")
           PYEOF
 
       - name: Verify Installer Before Build
