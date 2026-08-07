@@ -211,25 +211,7 @@ jobs:
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          echo "=== Unlock Delete Button ==="
-          python3 << 'PYEOF'
-          from pathlib import Path
-          import re
-
-          for path in Path("app/src/main/java").rglob("*.kt"):
-              text = path.read_text(encoding="utf-8")
-              if "DEFAULT_ASSISTANTS_IDS" in text:
-                  print("[FOUND]", path)
-                  text = re.sub(
-                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
-                      'true',
-                      text
-                  )
-                  path.write_text(text, encoding="utf-8")
-                  print("[PATCHED]", path)
-          PYEOF
-
-          echo "=== 5. Copy Builtin Skills & Installer ==="
+          echo "=== 3. Copy Builtin Skills & Installer ==="
           mkdir -p app/src/main/assets/skills
           if [ -d "mod/skills" ]; then
             cp -rf mod/skills/* app/src/main/assets/skills/
@@ -278,52 +260,43 @@ jobs:
                   print("[WARN] onCreate marker not found")
           PYEOF
 
-          echo "=== Disable Default Assistant Auto Restore ==="
+          echo "=== 4. Patch Default Assistants in PreferencesStore.kt ==="
           python3 << 'PYEOF'
           from pathlib import Path
           import re
 
+          # 1. 允许删除默认助手 (解除 UI 限制)
           for path in Path("app/src/main/java").rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
-              pattern = r"""val assistants = it\.assistants\.ifEmpty \{ DEFAULT_ASSISTANTS \}\.toMutableList\(\)
-          \s*DEFAULT_ASSISTANTS\.forEach \{ defaultAssistant ->
-          \s*if \(assistants\.none \{ it\.id == defaultAssistant\.id \} \) \{
-          \s*assistants\.add\(defaultAssistant\.copy\(\)\)
-          \s*\}
-          \s*\}"""
-              if re.search(pattern, text):
-                  print("[FOUND]", path)
+              if "DEFAULT_ASSISTANTS_IDS" in text:
+                  print("[FOUND DEFAULT_ASSISTANTS_IDS]", path)
                   text = re.sub(
-                      pattern,
-                      "val assistants = it.assistants.toMutableList()",
+                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
+                      'true',
                       text
                   )
                   path.write_text(text, encoding="utf-8")
-                  print("[PATCHED]", path)
-          PYEOF
+                  print("[PATCHED] Unlocked delete button")
 
-          echo "=== Fix Empty Assistant Crash ==="
-          python3 << 'PYEOF'
-          from pathlib import Path
-
-          for path in Path("app/src/main/java").rglob("*.kt"):
-              text = path.read_text(encoding="utf-8")
-              old = """fun Settings.getCurrentAssistant(): Assistant {
-              return this.assistants.find { it.id == assistantId } ?: this.assistants.first()
-          }"""
-              new = """fun Settings.getCurrentAssistant(): Assistant {
-              return this.assistants.find { it.id == assistantId }
-                  ?: this.assistants.firstOrNull()
-                  ?: Assistant(
-                      id = DEFAULT_ASSISTANT_ID,
-                      name = "",
-                      systemPrompt = ""
-                  )
-          }"""
-              if old in text:
-                  print("[PATCHED]", path)
-                  text = text.replace(old, new)
-                  path.write_text(text, encoding="utf-8")
+          # 2. 移除 DEFAULT_ASSISTANTS 里的第二个默认助手 (Gemini 预设)
+          pref_path = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
+          if pref_path.exists():
+              text = pref_path.read_text(encoding="utf-8")
+              # 匹配 DEFAULT_ASSISTANTS 数组定义，仅保留第一个基础 Assistant
+              pattern = r'internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?\n\)'
+              replacement = """internal val DEFAULT_ASSISTANTS = listOf(
+          Assistant(
+          id = DEFAULT_ASSISTANT_ID,
+          name = "",
+          systemPrompt = ""
+               )
+           )"""
+              if re.search(pattern, text):
+                  text = re.sub(pattern, replacement, text)
+                  pref_path.write_text(text, encoding="utf-8")
+                  print("[PATCHED] Trimmed DEFAULT_ASSISTANTS to 1 single assistant")
+              else:
+                  print("[WARN] DEFAULT_ASSISTANTS pattern not found in PreferencesStore.kt")
           PYEOF
 
           echo "=== Patch SkillsTools.kt ==="
