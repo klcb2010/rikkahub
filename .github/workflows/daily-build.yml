@@ -14,10 +14,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
       - name: Configure Git Identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
       # Step 1: 备份保护文件，同步上游仓库并还原保护文件
       - name: Sync Upstream with Protected Files
         id: sync
@@ -54,6 +56,7 @@ jobs:
             echo "No new changes from upstream merge."
             echo "has_sync_changes=false" >> $GITHUB_OUTPUT
           fi
+
       # Step 2: 获取版本号与 Tag 判定
       - name: Extract Version Name & Check Tag
         id: version
@@ -73,6 +76,7 @@ jobs:
             echo "tag_exists=false" >> $GITHUB_OUTPUT
             echo "New Tag ${TAG_NAME} will be created."
           fi
+
       # Step 3: 确定是否继续编译
       - name: Check Should Build
         id: check_build
@@ -85,17 +89,20 @@ jobs:
             echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "无新提交且版本号标签未更新，跳过构建。"
           fi
+
       - name: Set up JDK 17
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+
       - name: Set up pnpm
         if: steps.check_build.outputs.should_build == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 11
+
       - name: Set up Node 22
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/setup-node@v4
@@ -103,10 +110,12 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web-ui/pnpm-lock.yaml
+
       - name: Install web-ui dependencies
         if: steps.check_build.outputs.should_build == 'true'
         working-directory: web-ui
         run: pnpm install --frozen-lockfile
+
       - name: Gradle cache
         if: steps.check_build.outputs.should_build == 'true'
         uses: actions/cache@v4
@@ -115,6 +124,7 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
       # Step 4: 移除 BaselineProfile 模块
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
@@ -125,6 +135,7 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
+
       # Step 5: 修改 app/build.gradle.kts 与注入 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
@@ -282,6 +293,73 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
+      # Step 5.5: Patch MCP Gemini schema compatibility（独立步骤）
+      - name: Patch MCP Gemini schema compatibility
+        if: steps.check_build.outputs.should_build == 'true'
+        shell: bash
+        run: |
+          FILE="app/src/main/java/me/rerere/rikkahub/data/ai/mcp/McpSessionRegistry.kt"
+          if [ ! -f "$FILE" ]; then
+            echo "McpSessionRegistry.kt not found"
+            exit 1
+          fi
+          if grep -q "sanitizeGeminiSchema" "$FILE"; then
+            echo "MCP schema sanitizer already exists, skip"
+            exit 0
+          fi
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path("app/src/main/java/me/rerere/rikkahub/data/ai/mcp/McpSessionRegistry.kt")
+          s = p.read_text()
+          old = '''private fun ToolSchema.toSchema(): InputSchema =
+              InputSchema.Obj(properties = properties ?: JsonObject(emptyMap()), required = required)
+          '''
+          new = '''private fun ToolSchema.toSchema(): InputSchema =
+              InputSchema.Obj(
+                  properties = sanitizeGeminiSchema(
+                      properties ?: JsonObject(emptyMap())
+                  ),
+                  required = required
+              )
+          private fun sanitizeGeminiSchema(
+              source: JsonObject
+          ): JsonObject {
+              fun fix(value: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonElement {
+                  return when (value) {
+                      is JsonObject -> {
+                          val map = value.toMutableMap()
+                          if (
+                              map["type"]?.toString() == "\"array\"" &&
+                              !map.containsKey("items")
+                          ) {
+                              map["items"] =
+                                  JsonObject(
+                                      mapOf(
+                                          "type" to kotlinx.serialization.json.JsonPrimitive("string")
+                                      )
+                                  )
+                          }
+                          map.forEach { (k, v) ->
+                              map[k] = fix(v)
+                          }
+                          JsonObject(map)
+                      }
+                      is kotlinx.serialization.json.JsonArray -> {
+                          kotlinx.serialization.json.JsonArray(
+                              value.map { fix(it) }
+                          )
+                      }
+                      else -> value
+                  }
+              }
+              return fix(source) as JsonObject
+          }
+          '''
+          if old not in s:
+              raise SystemExit("target code not found, upstream changed?")
+          p.write_text(s.replace(old, new))
+          PY
+
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -291,12 +369,14 @@ jobs:
           grep -R "BundledSkillInstaller.install" app/src/main/java || true
           echo "=== Check Proguard ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
+
       # Step 6: 编译未签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
+
       # Step 7: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true'
@@ -305,6 +385,7 @@ jobs:
           git tag "$TAG" || true
           git push origin "$TAG" || true
           echo "Tag $TAG pushed."
+
       # Step 8: 发布 Release 并上传未签名 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true'
