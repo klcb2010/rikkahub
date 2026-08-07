@@ -246,22 +246,32 @@ jobs:
           echo "=== Inject Installer Into RikkaHubApp ==="
           python3 << 'PYEOF'
           from pathlib import Path
+
           path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
-          if path.exists():
-              text = path.read_text(encoding="utf-8")
-              if "BundledSkillInstaller.install(this)" not in text:
-                  old = "modules(appModule, viewModelModule, dataSourceModule, repositoryModule)\n                }"
-                  new = "modules(appModule, viewModelModule, dataSourceModule, repositoryModule)\n                }\n                BundledSkillInstaller.install(this)"
-                  if old in text:
-                      text = text.replace(old, new, 1)
-                      print("[OK] installer injected after Koin")
-                  else:
-                      print("[WARN] injection point not found")
-              else:
-                  print("[OK] installer already exists")
-              path.write_text(text, encoding="utf-8")
-          else:
+
+          if not path.exists():
               print("[WARN] RikkaHubApp.kt missing")
+              exit(0)
+
+          text = path.read_text(encoding="utf-8")
+
+          call = "    BundledSkillInstaller.install(this)"
+
+          if call in text:
+              print("[OK] installer already exists")
+          else:
+              marker = "override fun onCreate() {\n        super.onCreate()"
+
+              if marker in text:
+                  text = text.replace(
+                      marker,
+                      marker + "\n\n" + call,
+                      1
+                  )
+                  path.write_text(text, encoding="utf-8")
+                  print("[OK] installer injected after super.onCreate")
+              else:
+                  print("[WARN] onCreate marker not found")
           PYEOF
 
           echo "=== Patch SkillsTools.kt ==="
