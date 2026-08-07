@@ -342,18 +342,46 @@ jobs:
 
           touch app/proguard-rules.pro
 
+                    echo "=== Add R8 Keep Rules ==="
+
+          touch app/proguard-rules.pro
+
           cat >> app/proguard-rules.pro <<'EOF'
 
-          # ===========================
-          # Bundled Skill Installer
-          # ===========================
+# ===========================
+# Bundled Skills Installer
+# ===========================
 
-          -keep class me.rerere.rikkahub.BundledSkillInstaller {
-              public static void copyDir(...);
-              public static void install(...);
-          }
+-keep class me.rerere.rikkahub.BundledSkillInstaller {
+    *;
+}
 
-          EOF
+-keep class me.rerere.rikkahub.BundledSkillInstaller$* {
+    *;
+}
+
+-keepclassmembers class me.rerere.rikkahub.BundledSkillInstaller {
+    *;
+}
+
+-keepnames class me.rerere.rikkahub.BundledSkillInstaller
+
+
+# 保留 Application 调用入口
+-keep class me.rerere.rikkahub.RikkaHubApp {
+    *;
+}
+
+-keepclassmembers class me.rerere.rikkahub.RikkaHubApp {
+    *;
+}
+
+EOF
+
+
+echo "=== Verify Proguard Rules ==="
+
+grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
           echo "=== Verify Installer Injection ==="
 
