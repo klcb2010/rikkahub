@@ -293,78 +293,122 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
-      # Step 5.5: Patch MCP Gemini schema compatibility（独立步骤）
-      - name: Patch MCP Gemini schema compatibility
+      # Step 5.5: Patch Gemini MCP function schema compatibility
+      - name: Patch Gemini MCP schema compatibility
         if: steps.check_build.outputs.should_build == 'true'
         shell: bash
         run: |
-          FILE="app/src/main/java/me/rerere/rikkahub/data/ai/mcp/McpSessionRegistry.kt"
+          FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
           if [ ! -f "$FILE" ]; then
-            echo "McpSessionRegistry.kt not found"
+            echo "GoogleProvider.kt not found"
             exit 1
           fi
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "MCP schema sanitizer already exists, skip"
+            echo "Gemini schema sanitizer already exists, skip"
             exit 0
           fi
-          python3 <<'PY'
+          python3 <<'PYEOF'
           from pathlib import Path
-          p = Path("app/src/main/java/me/rerere/rikkahub/data/ai/mcp/McpSessionRegistry.kt")
-          s = p.read_text()
-          old = '''private fun ToolSchema.toSchema(): InputSchema =
-              InputSchema.Obj(properties = properties ?: JsonObject(emptyMap()), required = required)
+          path = Path(
+              "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+          )
+          text = path.read_text(encoding="utf-8")
+          old = '''
+                                put(
+                                    key = "parameters",
+                                    element = json.encodeToJsonElement(tool.parameters())
+                                        .removeElements(
+                                            listOf(
+                                                "const",
+                                                "exclusiveMaximum",
+                                                "exclusiveMinimum",
+                                                "format",
+                                                "additionalProperties",
+                                                "enum",
+                                            )
+                                        )
+                                )
           '''
-          new = r'''
-          private fun ToolSchema.toSchema(): InputSchema =
-              InputSchema.Obj(
-                  properties = sanitizeGeminiSchema(
-                      properties ?: JsonObject(emptyMap())
-                  ),
-                  required = required
-              )
-          private fun sanitizeGeminiSchema(
-              source: JsonObject
-          ): JsonObject {
-              fun fix(
-                  element: kotlinx.serialization.json.JsonElement
-              ): kotlinx.serialization.json.JsonElement {
-                  return when (element) {
-                      is JsonObject -> {
-                          val map = element.toMutableMap()
-                          val type =
-                              map["type"] as? kotlinx.serialization.json.JsonPrimitive
-                          if (
-                              type?.content == "array" &&
-                              !map.containsKey("items")
-                          ) {
-                              map["items"] = JsonObject(
-                                  mapOf(
-                                      "type" to kotlinx.serialization.json.JsonPrimitive("string")
-                                  )
-                              )
-                          }
-                          map.forEach { (key, value) ->
-                              map[key] = fix(value)
-                          }
-                          JsonObject(map)
-                      }
-                      is kotlinx.serialization.json.JsonArray -> {
-                          kotlinx.serialization.json.JsonArray(
-                              element.map { fix(it) }
-                          )
-                      }
-                      else -> element
-                  }
-              }
-              return fix(source) as JsonObject
-          }
+          new = '''
+                                put(
+                                    key = "parameters",
+                                    element = sanitizeGeminiSchema(
+                                        json.encodeToJsonElement(tool.parameters())
+                                            .removeElements(
+                                                listOf(
+                                                    "const",
+                                                    "exclusiveMaximum",
+                                                    "exclusiveMinimum",
+                                                    "format",
+                                                    "additionalProperties",
+                                                    "enum",
+                                                )
+                                            )
+                                    )
+                                )
           '''
-          if old not in s:
+          if old not in text:
               raise SystemExit(
-                  "Target code not found. Upstream may already changed this section."
+                  "Target parameters block not found. Upstream may already changed."
               )
-          p.write_text(s.replace(old, new))
-          PY
+          text = text.replace(old, new, 1)
+          marker = '''
+            private fun commonRoleToGoogleRole(role: MessageRole): String {
+            '''
+            inject = r'''
+            private fun sanitizeGeminiSchema(
+            element: kotlinx.serialization.json.JsonElement
+            ): kotlinx.serialization.json.JsonElement {
+                return when (element) {
+            is JsonObject -> {
+                val map = element.toMutableMap()
+                val type =
+                    map["type"]?.jsonPrimitive?.contentOrNull
+                if (
+                    type == "array" &&
+                    !map.containsKey("items")
+                ) {
+                    map["items"] =
+                        buildJsonObject {
+                            put(
+                                "type",
+                                "string"
+                            )
+                        }
+                }
+                map.forEach { (key, value) ->
+                    map[key] = sanitizeGeminiSchema(value)
+                }
+                JsonObject(map)
+            }
+            is JsonArray -> {
+                JsonArray(
+                    element.map {
+                        sanitizeGeminiSchema(it)
+                    }
+                )
+            }
+            else -> element
+             }
+            }
+            '''
+          if marker not in text:
+              raise SystemExit(
+                  "Injection marker not found"
+              )
+          text = text.replace(
+              marker,
+              inject + marker,
+              1
+          )
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
+          print(
+              "Gemini schema sanitizer injected"
+          )
+          PYEOF
 
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
@@ -402,5 +446,5 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            自动同步构建版 `${{ steps.version.outputs.version_name }}`
+            同步构建 `${{ steps.version.outputs.version_name }}`
           files: app/build/outputs/apk/release/*.apk
