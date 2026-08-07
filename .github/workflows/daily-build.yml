@@ -178,8 +178,8 @@ jobs:
           # 6. Firebase 清理
           content = re.sub(r'\s*// Firebase', '', content)
           content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
-          content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
           content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
+          content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(content)
           print("[OK] app/build.gradle.kts modified successfully.")
@@ -314,7 +314,8 @@ jobs:
           old = '''private fun ToolSchema.toSchema(): InputSchema =
               InputSchema.Obj(properties = properties ?: JsonObject(emptyMap()), required = required)
           '''
-          new = '''private fun ToolSchema.toSchema(): InputSchema =
+          new = r'''
+          private fun ToolSchema.toSchema(): InputSchema =
               InputSchema.Obj(
                   properties = sanitizeGeminiSchema(
                       properties ?: JsonObject(emptyMap())
@@ -324,39 +325,44 @@ jobs:
           private fun sanitizeGeminiSchema(
               source: JsonObject
           ): JsonObject {
-              fun fix(value: kotlinx.serialization.json.JsonElement): kotlinx.serialization.json.JsonElement {
-                  return when (value) {
+              fun fix(
+                  element: kotlinx.serialization.json.JsonElement
+              ): kotlinx.serialization.json.JsonElement {
+                  return when (element) {
                       is JsonObject -> {
-                          val map = value.toMutableMap()
+                          val map = element.toMutableMap()
+                          val type =
+                              map["type"] as? kotlinx.serialization.json.JsonPrimitive
                           if (
-                              map["type"]?.toString() == "\"array\"" &&
+                              type?.content == "array" &&
                               !map.containsKey("items")
                           ) {
-                              map["items"] =
-                                  JsonObject(
-                                      mapOf(
-                                          "type" to kotlinx.serialization.json.JsonPrimitive("string")
-                                      )
+                              map["items"] = JsonObject(
+                                  mapOf(
+                                      "type" to kotlinx.serialization.json.JsonPrimitive("string")
                                   )
+                              )
                           }
-                          map.forEach { (k, v) ->
-                              map[k] = fix(v)
+                          map.forEach { (key, value) ->
+                              map[key] = fix(value)
                           }
                           JsonObject(map)
                       }
                       is kotlinx.serialization.json.JsonArray -> {
                           kotlinx.serialization.json.JsonArray(
-                              value.map { fix(it) }
+                              element.map { fix(it) }
                           )
                       }
-                      else -> value
+                      else -> element
                   }
               }
               return fix(source) as JsonObject
           }
           '''
           if old not in s:
-              raise SystemExit("target code not found, upstream changed?")
+              raise SystemExit(
+                  "Target code not found. Upstream may already changed this section."
+              )
           p.write_text(s.replace(old, new))
           PY
 
