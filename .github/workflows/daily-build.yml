@@ -34,12 +34,14 @@ jobs:
           [ -f "build.gradle.kts" ] && cp --parents build.gradle.kts /tmp/protected_backup/ || true
           [ -f "app/google-services.json" ] && cp --parents app/google-services.json /tmp/protected_backup/ || true
           [ -d "mod" ] && cp -r mod /tmp/protected_backup/ || true
+
           echo "=== Fetching and merging upstream ==="
           git remote add upstream https://github.com/rikkahub/rikkahub.git || true
           git fetch upstream master || git fetch upstream main
           UPSTREAM_BRANCH="upstream/master"
           git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || UPSTREAM_BRANCH="upstream/main"
           git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours
+
           echo "=== Restoring protected files ==="
           [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && cp /tmp/protected_backup/.github/workflows/daily-build.yml .github/workflows/daily-build.yml || true
           [ -f "/tmp/protected_backup/README.md" ] && cp /tmp/protected_backup/README.md README.md || true
@@ -49,6 +51,7 @@ jobs:
             rm -rf mod
             cp -r /tmp/protected_backup/mod mod
           fi
+
           git add .
           if ! git diff --staged --quiet; then
             git commit -m "sync: merge upstream with protected local files"
@@ -208,35 +211,26 @@ jobs:
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          
           echo "=== Unlock Delete Button ==="
-
           python3 << 'PYEOF'
-from pathlib import Path
+          from pathlib import Path
+          import re
 
-for path in Path("app/src/main/java").rglob("*.kt"):
-    text = path.read_text(encoding="utf-8")
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              if "DEFAULT_ASSISTANTS_IDS" in text:
+                  print("[FOUND]", path)
+                  text = re.sub(
+                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
+                      'true',
+                      text
+                  )
+                  path.write_text(text, encoding="utf-8")
+                  print("[PATCHED]", path)
+          PYEOF
 
-    if "DEFAULT_ASSISTANTS_IDS" in text:
-        print("[FOUND]", path)
-
-        import re
-
-text = re.sub(
-    r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
-    'true',
-    text
-)
-
-        path.write_text(text, encoding="utf-8")
-
-        print("[PATCHED]", path)
-
-PYEOF
           echo "=== 5. Copy Builtin Skills & Installer ==="
-
           mkdir -p app/src/main/assets/skills
-
           if [ -d "mod/skills" ]; then
             cp -rf mod/skills/* app/src/main/assets/skills/
             echo "[OK] skills copied"
@@ -245,226 +239,151 @@ PYEOF
             echo "[WARN] mod/skills missing"
           fi
 
-
           echo "=== Copy BundledSkillInstaller ==="
-
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
             cp -f mod/BundledSkillInstaller.java \
               app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
-
             echo "[OK] BundledSkillInstaller copied"
           else
             echo "[WARN] BundledSkillInstaller missing"
           fi
 
-
           echo "=== Inject Installer Into RikkaHubApp ==="
-
           python3 << 'PYEOF'
-from pathlib import Path
-import re
+          from pathlib import Path
+          import re
 
-path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
+          path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
+          if not path.exists():
+              print("[WARN] RikkaHubApp.kt missing")
+              exit(0)
 
-if not path.exists():
-    print("[WARN] RikkaHubApp.kt missing")
-    exit(0)
-
-text = path.read_text(encoding="utf-8")
-
-call = "        BundledSkillInstaller.install(this)"
-
-if call in text:
-    print("[OK] installer already exists")
-
-else:
-    pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
-
-    if re.search(pattern, text):
-        text = re.sub(
-            pattern,
-            r'\1\n\n' + call,
-            text,
-            count=1
-        )
-
-        path.write_text(text, encoding="utf-8")
-        print("[OK] installer injected")
-
-    else:
-        print("[WARN] onCreate marker not found")
-
-PYEOF
-
-
+          text = path.read_text(encoding="utf-8")
+          call = "        BundledSkillInstaller.install(this)"
+          if call in text:
+              print("[OK] installer already exists")
+          else:
+              pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      r'\1\n\n' + call,
+                      text,
+                      count=1
+                  )
+                  path.write_text(text, encoding="utf-8")
+                  print("[OK] installer injected")
+              else:
+                  print("[WARN] onCreate marker not found")
+          PYEOF
 
           echo "=== Disable Default Assistant Auto Restore ==="
-
           python3 << 'PYEOF'
-from pathlib import Path
-import re
+          from pathlib import Path
+          import re
 
-for path in Path("app/src/main/java").rglob("*.kt"):
-
-    text = path.read_text(encoding="utf-8")
-
-    pattern = r"""val assistants = it\.assistants\.ifEmpty \{ DEFAULT_ASSISTANTS \}\.toMutableList\(\)
-\s*DEFAULT_ASSISTANTS\.forEach \{ defaultAssistant ->
-\s*if \(assistants\.none \{ it\.id == defaultAssistant\.id \} \) \{
-\s*assistants\.add\(defaultAssistant\.copy\(\)\)
-\s*\}
-\s*\}"""
-
-    if re.search(pattern, text):
-
-        print("[FOUND]", path)
-
-        text = re.sub(
-            pattern,
-            "val assistants = it.assistants.toMutableList()",
-            text
-        )
-
-        path.write_text(text, encoding="utf-8")
-
-        print("[PATCHED]", path)
-
-PYEOF
-
-
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              pattern = r"""val assistants = it\.assistants\.ifEmpty \{ DEFAULT_ASSISTANTS \}\.toMutableList\(\)
+          \s*DEFAULT_ASSISTANTS\.forEach \{ defaultAssistant ->
+          \s*if \(assistants\.none \{ it\.id == defaultAssistant\.id \} \) \{
+          \s*assistants\.add\(defaultAssistant\.copy\(\)\)
+          \s*\}
+          \s*\}"""
+              if re.search(pattern, text):
+                  print("[FOUND]", path)
+                  text = re.sub(
+                      pattern,
+                      "val assistants = it.assistants.toMutableList()",
+                      text
+                  )
+                  path.write_text(text, encoding="utf-8")
+                  print("[PATCHED]", path)
+          PYEOF
 
           echo "=== Fix Empty Assistant Crash ==="
-
           python3 << 'PYEOF'
-from pathlib import Path
+          from pathlib import Path
 
-for path in Path("app/src/main/java").rglob("*.kt"):
-
-    text = path.read_text(encoding="utf-8")
-
-    old = """fun Settings.getCurrentAssistant(): Assistant {
-    return this.assistants.find { it.id == assistantId } ?: this.assistants.first()
-}"""
-
-    new = """fun Settings.getCurrentAssistant(): Assistant {
-    return this.assistants.find { it.id == assistantId }
-        ?: this.assistants.firstOrNull()
-        ?: Assistant(
-            id = DEFAULT_ASSISTANT_ID,
-            name = "",
-            systemPrompt = ""
-        )
-}"""
-
-    if old in text:
-
-        print("[PATCHED]", path)
-
-        text = text.replace(old, new)
-
-        path.write_text(text, encoding="utf-8")
-
-PYEOF
-
-
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              old = """fun Settings.getCurrentAssistant(): Assistant {
+              return this.assistants.find { it.id == assistantId } ?: this.assistants.first()
+          }"""
+              new = """fun Settings.getCurrentAssistant(): Assistant {
+              return this.assistants.find { it.id == assistantId }
+                  ?: this.assistants.firstOrNull()
+                  ?: Assistant(
+                      id = DEFAULT_ASSISTANT_ID,
+                      name = "",
+                      systemPrompt = ""
+                  )
+          }"""
+              if old in text:
+                  print("[PATCHED]", path)
+                  text = text.replace(old, new)
+                  path.write_text(text, encoding="utf-8")
+          PYEOF
 
           echo "=== Patch SkillsTools.kt ==="
-
           SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
-
           if [ -f "$SKILLS_TOOLS" ]; then
-
             python3 << 'PYEOF'
-from pathlib import Path
+          from pathlib import Path
 
-path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
-
-text = path.read_text(encoding="utf-8")
-
-old = "val available = allSkills.filter { it.name in enabledSkills }"
-
-if old in text:
-    text = text.replace(
-        old,
-        "val available = allSkills"
-    )
-
-    path.write_text(text, encoding="utf-8")
-
-    print("[OK] SkillsTools patched")
-
-else:
-    print("[WARN] SkillsTools target not found")
-
-PYEOF
-
+          path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
+          text = path.read_text(encoding="utf-8")
+          old = "val available = allSkills.filter { it.name in enabledSkills }"
+          if old in text:
+              text = text.replace(
+                  old,
+                  "val available = allSkills"
+              )
+              path.write_text(text, encoding="utf-8")
+              print("[OK] SkillsTools patched")
+          else:
+              print("[WARN] SkillsTools target not found")
+          PYEOF
           fi
-
-
 
           echo "=== Patch ChatService ==="
-
           CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
-
           if [ -f "$CHAT_SERVICE" ]; then
-
             python3 << 'PYEOF'
-from pathlib import Path
+          from pathlib import Path
 
-path = Path("app/src/main/java/me/rerere/rikkahub/service/ChatService.kt")
-
-text = path.read_text(encoding="utf-8")
-
-text = text.replace(
-    "assistant.enabledSkills.isNotEmpty()",
-    "true"
-)
-
-path.write_text(text, encoding="utf-8")
-
-print("[OK] ChatService patched")
-
-PYEOF
-
+          path = Path("app/src/main/java/me/rerere/rikkahub/service/ChatService.kt")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              "assistant.enabledSkills.isNotEmpty()",
+              "true"
+          )
+          path.write_text(text, encoding="utf-8")
+          print("[OK] ChatService patched")
+          PYEOF
           fi
-
-
 
           echo "=== Add R8 Keep Rules ==="
-
           touch app/proguard-rules.pro
-
           if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
-
             cat >> app/proguard-rules.pro << 'RULESEOF'
-
-# ===========================
-# Bundled Skills Installer
-# ===========================
-
--keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
--keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
-
--keep class me.rerere.rikkahub.RikkaHubApp { *; }
-
--keep class me.rerere.rikkahub.data.ai.tools.** { *; }
-
-RULESEOF
-
+          # ===========================
+          # Bundled Skills Installer
+          # ===========================
+          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
+          -keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
+          -keep class me.rerere.rikkahub.RikkaHubApp { *; }
+          -keep class me.rerere.rikkahub.data.ai.tools.** { *; }
+          RULESEOF
           fi
 
-
           echo "=== Verify Proguard Rules ==="
-
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
-
           echo "=== Verify Installer Injection ==="
-
           grep -R "BundledSkillInstaller.install" \
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
-
 
           echo "=== BundledSkillInstaller Patch Done ==="
 
@@ -507,4 +426,3 @@ RULESEOF
             自动同步构建版 `${{ steps.version.outputs.version_name }}`
             Commit: `${{ github.sha }}`
           files: app/build/outputs/apk/release/*.apk
-
