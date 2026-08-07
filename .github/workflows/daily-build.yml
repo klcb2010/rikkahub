@@ -282,15 +282,14 @@ jobs:
           pref_path = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
           if pref_path.exists():
               text = pref_path.read_text(encoding="utf-8")
-              # 匹配 DEFAULT_ASSISTANTS 数组定义，仅保留第一个基础 Assistant
               pattern = r'internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?\n\)'
               replacement = """internal val DEFAULT_ASSISTANTS = listOf(
-          Assistant(
+              Assistant(
           id = DEFAULT_ASSISTANT_ID,
           name = "",
           systemPrompt = ""
-               )
-           )"""
+                )
+            )"""
               if re.search(pattern, text):
                   text = re.sub(pattern, replacement, text)
                   pref_path.write_text(text, encoding="utf-8")
@@ -299,43 +298,25 @@ jobs:
                   print("[WARN] DEFAULT_ASSISTANTS pattern not found in PreferencesStore.kt")
           PYEOF
 
-          echo "=== Patch SkillsTools.kt ==="
-          SKILLS_TOOLS="app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt"
-          if [ -f "$SKILLS_TOOLS" ]; then
-            python3 << 'PYEOF'
+          echo "=== Enable MCP Default ==="
+          python3 << 'PYEOF'
           from pathlib import Path
+          import re
 
-          path = Path("app/src/main/java/me/rerere/rikkahub/data/ai/tools/SkillsTools.kt")
-          text = path.read_text(encoding="utf-8")
-          old = "val available = allSkills.filter { it.name in enabledSkills }"
-          if old in text:
-              text = text.replace(
-                  old,
-                  "val available = allSkills"
-              )
-              path.write_text(text, encoding="utf-8")
-              print("[OK] SkillsTools patched")
-          else:
-              print("[WARN] SkillsTools target not found")
+          for path in Path("app/src/main/java").rglob("*.kt"):
+              text = path.read_text(encoding="utf-8")
+              if "mcp" in text.lower() and "enabled" in text.lower():
+                  print("[CHECK]", path)
+                  # 常见默认 false 改 true
+                  text2 = re.sub(
+                      r'(mcp\w*Enabled\s*=\s*)false',
+                      r'\1true',
+                      text
+                  )
+                  if text2 != text:
+                      path.write_text(text2, encoding="utf-8")
+                      print("[PATCH MCP]", path)
           PYEOF
-          fi
-
-          echo "=== Patch ChatService ==="
-          CHAT_SERVICE="app/src/main/java/me/rerere/rikkahub/service/ChatService.kt"
-          if [ -f "$CHAT_SERVICE" ]; then
-            python3 << 'PYEOF'
-          from pathlib import Path
-
-          path = Path("app/src/main/java/me/rerere/rikkahub/service/ChatService.kt")
-          text = path.read_text(encoding="utf-8")
-          text = text.replace(
-              "assistant.enabledSkills.isNotEmpty()",
-              "true"
-          )
-          path.write_text(text, encoding="utf-8")
-          print("[OK] ChatService patched")
-          PYEOF
-          fi
 
           echo "=== Add R8 Keep Rules ==="
           touch app/proguard-rules.pro
@@ -397,5 +378,4 @@ jobs:
           prerelease: false
           body: |
             自动同步构建版 `${{ steps.version.outputs.version_name }}`
-            Commit: `${{ github.sha }}`
           files: app/build/outputs/apk/release/*.apk
