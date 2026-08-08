@@ -2,12 +2,11 @@
 
 - 默认一个助手
 
-- 修复谷歌AI校验在SOMCP上的报错
+- 修复谷歌AI校验在SOMCP上的报错 测试 问AI 列出 available_skills 技能名 并列出全部已经连接的MCP服务器 
+
 
 - 注入技能 默认不开
 
 - 去除谷歌组件
 
 - 没签名  不会搞这个
-
-- 测试 问AI 列出 available_skills 技能名 并列出全部已经连接的MCP服务器 
