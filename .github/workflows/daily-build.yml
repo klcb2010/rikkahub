@@ -374,9 +374,9 @@ jobs:
           # 注入 sanitizer
           inject = """
 
-        private fun sanitizeGeminiSchema(
+          private fun sanitizeGeminiSchema(
             element: kotlinx.serialization.json.JsonElement
-        ): kotlinx.serialization.json.JsonElement {
+          ): kotlinx.serialization.json.JsonElement {
 
             return when (element) {
 
@@ -425,9 +425,9 @@ jobs:
 
                 else -> element
             }
-        }
+          }
 
-    """
+          """
 
 
           last_brace = text.rfind("}")
