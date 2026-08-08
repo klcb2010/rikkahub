@@ -293,7 +293,7 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
-      # === 5.4 Check Gemini Schema Compatibility ===
+      # === 5.4 Check Gemini schema compatibility ===
       - name: Check Gemini schema compatibility
         if: steps.check_build.outputs.should_build == 'true'
         id: gemini_check
@@ -303,27 +303,26 @@ jobs:
 
           if [ ! -f "$FILE" ]; then
             echo "GoogleProvider.kt not found"
-            echo "required=false" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 1
           fi
 
-          # 已经存在补丁，说明无需再次处理
+          # 已经存在 sanitizer，说明已经处理过
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "Gemini sanitizer already exists"
+            echo "Gemini schema patch already exists"
             echo "required=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # 检查原始工具 schema 生成入口
+          # 检查官方是否已经修改 schema 入口
           if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
-            echo "Old Gemini schema detected"
+            echo "Gemini schema still needs patch"
             echo "required=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Upstream Gemini schema fix detected or code changed"
+            echo "Upstream Gemini schema fix detected"
             echo "required=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # === 5.5 Patch Gemini MCP schema compatibility ===
+      # === 5.5 Patch Gemini schema compatibility ===
       - name: Patch Gemini schema compatibility
         if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.required == 'true'
         shell: bash
@@ -337,25 +336,24 @@ jobs:
 
           text = path.read_text(encoding="utf-8")
 
-          old = """
-          json.encodeToJsonElement(tool.parameters())
-          """
-
-          new = """
-          sanitizeGeminiSchema(
-              json.encodeToJsonElement(tool.parameters())
-          )
-          """
-
           if "sanitizeGeminiSchema" in text:
-              print("sanitize already exists")
+              print("Gemini sanitizer already exists")
               exit(0)
 
-          if old not in text:
-              print("Gemini schema source changed, skip patch")
-              exit(0)
+          target = "json.encodeToJsonElement(tool.parameters())"
 
-          text = text.replace(old, new, 1)
+          if target not in text:
+              raise SystemExit(
+                  "Gemini parameters source not found, patch aborted"
+              )
+
+          text = text.replace(
+              target,
+              "sanitizeGeminiSchema(\n"
+              "    json.encodeToJsonElement(tool.parameters())\n"
+              ")",
+              1
+          )
 
           inject = r'''
 
@@ -370,10 +368,15 @@ jobs:
                       val map = element.toMutableMap()
 
                       val type =
-                          map["type"] as? JsonPrimitive
+                          map["type"]
+                              ?.let {
+                                  runCatching {
+                                      it.jsonPrimitive.contentOrNull
+                                  }.getOrNull()
+                              }
 
                       if (
-                          type?.contentOrNull == "array" &&
+                          type == "array" &&
                           !map.containsKey("items")
                       ) {
 
@@ -414,8 +417,9 @@ jobs:
           index = text.rfind("}")
 
           if index == -1:
-              print("Cannot find class end")
-              exit(0)
+              raise SystemExit(
+                  "Cannot find GoogleProvider class end"
+              )
 
           text = (
               text[:index]
@@ -429,7 +433,7 @@ jobs:
           )
 
           print(
-              "Gemini sanitizer injected"
+              "Gemini sanitizer injected successfully"
           )
           PYEOF
 
