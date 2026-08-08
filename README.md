@@ -2,7 +2,7 @@
 
 - 默认一个助手
 
-- 修复谷歌AI校验在SOMCP上的报错 测试 问AI 列出 available_skills 技能名 并列出全部已经连接的MCP服务器 
+- 修复谷歌AI校验在SOMCP上的报错 测试方法 问AI列出available_skills技能名并列出全部已经连接的MCP服务器 
 
 
 - 注入玄星开源技能 默认不开
