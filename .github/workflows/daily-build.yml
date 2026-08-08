@@ -305,6 +305,11 @@ jobs:
             exit 1
           fi
 
+          if grep -q "sanitizeGeminiSchema" "$FILE"; then
+            echo "Gemini schema sanitizer already exists, skip"
+            exit 0
+          fi
+
           python3 <<'PYEOF'
           from pathlib import Path
           import re
@@ -316,153 +321,113 @@ jobs:
           text = path.read_text(encoding="utf-8")
 
 
-          if "sanitizeGeminiSchema" in text:
-              print(
-                  "Gemini schema sanitizer already exists, skip"
-              )
-              exit(0)
+          # 替换 parameters schema 生成位置
+          pattern = r'''put\(
+          \s*key\s*=\s*"parameters",
+          \s*element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
+          \s*\.removeElements\(
+          \s*listOf\(
+          \s*"const",
+          \s*"exclusiveMaximum",
+          \s*"exclusiveMinimum",
+          \s*"format",
+          \s*"additionalProperties",
+          \s*"enum",
+          \s*\)
+          \s*\)
+          \s*\)'''
 
-
-          # 优先匹配完整旧版本
-          pattern = r'''
-          put\(
-              key\s*=\s*"parameters",
-              element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
-                  \.removeElements\(
-                      listOf\(
-                          "const",
-                          "exclusiveMaximum",
-                          "exclusiveMinimum",
-                          "format",
-                          "additionalProperties",
-                          "enum",
-                      \)
-                  \)
-          \)
-          '''
-
-          match = re.search(
-              pattern,
-              text,
-              re.VERBOSE
-          )
-
-
-          # 备用匹配：兼容上游轻微修改格式
-          if not match:
-              print(
-                  "Primary Gemini block not found, trying fallback"
-              )
-
-              fallback = r'''
-              put\(
-                  key\s*=\s*"parameters",
-                  element\s*=\s*
-                  json\.encodeToJsonElement\(tool\.parameters\(\)\)
-              '''
-
-              match = re.search(
-                  fallback,
-                  text,
-                  re.VERBOSE
-              )
-
-
-          if not match:
-              raise SystemExit(
-                  "Gemini parameters block not found, upstream changed too much"
-              )
-
-
-          old = match.group(0)
-
-
-          new = """
-          put(
-              key = "parameters",
-              element = sanitizeGeminiSchema(
-                  json.encodeToJsonElement(tool.parameters())
-                      .removeElements(
-                          listOf(
-                              "const",
-                              "exclusiveMaximum",
-                              "exclusiveMinimum",
-                              "format",
-                              "additionalProperties",
-                              "enum",
-                          )
-                      )
-              )
-          )
+          replacement = """
+                                      put(
+                                          key = "parameters",
+                                          element = sanitizeGeminiSchema(
+                                              json.encodeToJsonElement(tool.parameters())
+                                                  .removeElements(
+                                                      listOf(
+                                                          "const",
+                                                          "exclusiveMaximum",
+                                                          "exclusiveMinimum",
+                                                          "format",
+                                                          "additionalProperties",
+                                                          "enum",
+                                                      )
+                                                  )
+                                          )
+                                      )
           """
 
 
+          match = re.search(pattern, text)
+
+          if not match:
+              raise SystemExit(
+                  "Gemini parameters block not found"
+              )
+
           text = (
               text[:match.start()]
-              + new.strip()
+              + replacement.strip()
               + text[match.end():]
           )
 
 
-          inject = r'''
+          # 注入 sanitizer
+          inject = """
 
           private fun sanitizeGeminiSchema(
-              element: kotlinx.serialization.json.JsonElement
+            element: kotlinx.serialization.json.JsonElement
           ): kotlinx.serialization.json.JsonElement {
 
-              return when (element) {
+            return when (element) {
 
-                  is JsonObject -> {
+                is JsonObject -> {
 
-                      val map = element.toMutableMap()
+                    val map = element.toMutableMap()
 
-
-                      val type =
-                          map["type"] as? JsonPrimitive
-
-
-                      if (
-                          type?.contentOrNull == "array" &&
-                          !map.containsKey("items")
-                      ) {
-
-                          map["items"] =
-                              buildJsonObject {
-                                  put(
-                                      "type",
-                                      "string"
-                                  )
-                              }
-                      }
+                    val type =
+                        (map["type"] as? JsonPrimitive)
+                            ?.contentOrNull
 
 
-                      map.forEach { (key, value) ->
-
-                          map[key] =
-                              sanitizeGeminiSchema(value)
-
-                      }
-
-
-                      JsonObject(map)
-                  }
-
-
-                  is JsonArray -> {
-
-                      JsonArray(
-                          element.map {
-                              sanitizeGeminiSchema(it)
-                          }
-                      )
-                  }
+                    if (
+                        type == "array" &&
+                        !map.containsKey("items")
+                    ) {
+                        map["items"] =
+                            buildJsonObject {
+                                put(
+                                    "type",
+                                    "string"
+                                )
+                            }
+                    }
 
 
-                  else -> element
-              }
+                    map.entries.toList().forEach { (key, value) ->
+                        map[key] =
+                            sanitizeGeminiSchema(value)
+                    }
+
+
+                    JsonObject(map)
+                }
+
+
+                is JsonArray -> {
+
+                    JsonArray(
+                        element.map {
+                            sanitizeGeminiSchema(it)
+                        }
+                    )
+                }
+
+
+                else -> element
+            }
           }
 
-          '''
+          """
 
 
           last_brace = text.rfind("}")
@@ -487,7 +452,7 @@ jobs:
 
 
           print(
-              "Gemini schema sanitizer injected successfully"
+              "Gemini schema sanitizer injected"
           )
 
           PYEOF
