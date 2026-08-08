@@ -293,47 +293,43 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
-      # Step 5.4: Check Gemini MCP schema compatibility
-      - name: Check Gemini MCP schema compatibility
-        id: gemini_check
+      # === 5.4 Check Gemini Schema Compatibility ===
+      - name: Check Gemini schema compatibility
         if: steps.check_build.outputs.should_build == 'true'
+        id: gemini_check
         shell: bash
         run: |
           FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
 
           if [ ! -f "$FILE" ]; then
             echo "GoogleProvider.kt not found"
-            exit 1
-          fi
-
-          echo "Checking Gemini schema compatibility..."
-
-          if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "Gemini sanitizer already exists"
-            echo "need_patch=false" >> $GITHUB_OUTPUT
+            echo "required=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
-            echo "Old Gemini schema generator detected"
-            echo "need_patch=true" >> $GITHUB_OUTPUT
-          else
-            echo "Gemini schema fixed upstream"
-            echo "need_patch=false" >> $GITHUB_OUTPUT
+          # 已经存在补丁，说明无需再次处理
+          if grep -q "sanitizeGeminiSchema" "$FILE"; then
+            echo "Gemini sanitizer already exists"
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      # Step 5.5: Patch Gemini MCP schema compatibility
-      - name: Patch Gemini MCP schema compatibility
-        if: |
-          steps.check_build.outputs.should_build == 'true' &&
-          steps.gemini_check.outputs.need_patch == 'true'
+          # 检查原始工具 schema 生成入口
+          if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
+            echo "Old Gemini schema detected"
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream Gemini schema fix detected or code changed"
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # === 5.5 Patch Gemini MCP schema compatibility ===
+      - name: Patch Gemini schema compatibility
+        if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.required == 'true'
         shell: bash
         run: |
-          FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
-
           python3 <<'PYEOF'
           from pathlib import Path
-          import re
 
           path = Path(
               "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
@@ -341,68 +337,25 @@ jobs:
 
           text = path.read_text(encoding="utf-8")
 
-          if "sanitizeGeminiSchema" in text:
-              print("Already patched")
-              exit(0)
+          old = """
+          json.encodeToJsonElement(tool.parameters())
+          """
 
-          if "import kotlinx.serialization.json.jsonPrimitiveOrNull" not in text:
-              text = text.replace(
-                  "import kotlinx.serialization.json.jsonPrimitive",
-                  "import kotlinx.serialization.json.jsonPrimitive\nimport kotlinx.serialization.json.jsonPrimitiveOrNull"
-              )
-
-          pattern = r'''
-          put\(
-              key\s*=\s*"parameters",
-              element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
-                  \.removeElements\(
-                      listOf\(
-                          "const",
-                          "exclusiveMaximum",
-                          "exclusiveMinimum",
-                          "format",
-                          "additionalProperties",
-                          "enum",
-                      \)
-                  \)
-          \)
-          '''
-
-          match = re.search(
-              pattern,
-              text,
-              re.VERBOSE
-          )
-
-          if not match:
-              raise SystemExit(
-                  "Gemini parameters block not found"
-              )
-
-          replacement = """
-          put(
-              key = "parameters",
-              element = sanitizeGeminiSchema(
-                  json.encodeToJsonElement(tool.parameters())
-                      .removeElements(
-                          listOf(
-                              "const",
-                              "exclusiveMaximum",
-                              "exclusiveMinimum",
-                              "format",
-                              "additionalProperties",
-                              "enum",
-                          )
-                      )
-              )
+          new = """
+          sanitizeGeminiSchema(
+              json.encodeToJsonElement(tool.parameters())
           )
           """
 
-          text = (
-              text[:match.start()]
-              + replacement.strip()
-              + text[match.end():]
-          )
+          if "sanitizeGeminiSchema" in text:
+              print("sanitize already exists")
+              exit(0)
+
+          if old not in text:
+              print("Gemini schema source changed, skip patch")
+              exit(0)
+
+          text = text.replace(old, new, 1)
 
           inject = r'''
 
@@ -414,27 +367,17 @@ jobs:
 
                   is JsonObject -> {
 
-                      val result =
-                          mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
-
-                      element.forEach { (key, value) ->
-
-                          result[key] =
-                              sanitizeGeminiSchema(value)
-
-                      }
+                      val map = element.toMutableMap()
 
                       val type =
-                          element["type"]
-                              ?.jsonPrimitiveOrNull
-                              ?.contentOrNull
+                          map["type"] as? JsonPrimitive
 
                       if (
-                          type == "array" &&
-                          !result.containsKey("items")
+                          type?.contentOrNull == "array" &&
+                          !map.containsKey("items")
                       ) {
 
-                          result["items"] =
+                          map["items"] =
                               buildJsonObject {
                                   put(
                                       "type",
@@ -443,7 +386,12 @@ jobs:
                               }
                       }
 
-                      JsonObject(result)
+                      map.forEach { (key, value) ->
+                          map[key] =
+                              sanitizeGeminiSchema(value)
+                      }
+
+                      JsonObject(map)
                   }
 
 
@@ -463,17 +411,16 @@ jobs:
 
           '''
 
-          last_brace = text.rfind("}")
+          index = text.rfind("}")
 
-          if last_brace == -1:
-              raise SystemExit(
-                  "Cannot find class closing brace"
-              )
+          if index == -1:
+              print("Cannot find class end")
+              exit(0)
 
           text = (
-              text[:last_brace]
+              text[:index]
               + inject
-              + text[last_brace:]
+              + text[index:]
           )
 
           path.write_text(
@@ -482,7 +429,7 @@ jobs:
           )
 
           print(
-              "Gemini schema sanitizer injected successfully"
+              "Gemini sanitizer injected"
           )
           PYEOF
 
