@@ -299,42 +299,45 @@ jobs:
         shell: bash
         run: |
           FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+
           if [ ! -f "$FILE" ]; then
             echo "GoogleProvider.kt not found"
             exit 1
           fi
+
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
             echo "Gemini schema sanitizer already exists, skip"
             exit 0
           fi
+
           python3 <<'PYEOF'
           from pathlib import Path
           import re
 
-          path = Path("ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt")
+          path = Path(
+              "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+          )
+
           text = path.read_text(encoding="utf-8")
 
-          # 1. 匹配并替换 parameters 块
-          pattern = r'''put\(\s*
-          \s*key\s*=\s*"parameters",\s*
-          \s*element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)\s*
-          \s*\.removeElements\(\s*
-          \s*listOf\(\s*
-          \s*"const",\s*
-          \s*"exclusiveMaximum",\s*
-          \s*"exclusiveMinimum",\s*
-          \s*"format",\s*
-          \s*"additionalProperties",\s*
-          \s*"enum",\s*
-          \s*\)\s*
-          \s*\)\s*
+
+          # 替换 parameters schema 生成位置
+          pattern = r'''put\(
+          \s*key\s*=\s*"parameters",
+          \s*element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
+          \s*\.removeElements\(
+          \s*listOf\(
+          \s*"const",
+          \s*"exclusiveMaximum",
+          \s*"exclusiveMinimum",
+          \s*"format",
+          \s*"additionalProperties",
+          \s*"enum",
+          \s*\)
+          \s*\)
           \s*\)'''
 
-          match = re.search(pattern, text, re.VERBOSE | re.DOTALL)
-          if not match:
-              raise SystemExit("Gemini parameters block not found")
-
-          new = '''
+          replacement = """
                                       put(
                                           key = "parameters",
                                           element = sanitizeGeminiSchema(
@@ -351,59 +354,107 @@ jobs:
                                                   )
                                           )
                                       )
-          '''
+          """
 
-          text = text[:match.start()] + new.strip() + text[match.end():]
 
-          # 2. 定义要注入的函数
-          inject = '''
-                  private fun sanitizeGeminiSchema(
-                      element: kotlinx.serialization.json.JsonElement
-                  ): kotlinx.serialization.json.JsonElement {
-                      return when (element) {
-                          is JsonObject -> {
-                              val map = element.toMutableMap()
-                              val type =
-                                  map["type"]?.jsonPrimitive?.contentOrNull
-                              if (
-                                  type == "array" &&
-                                  !map.containsKey("items")
-                              ) {
-                                  map["items"] =
-                                      buildJsonObject {
-                                          put(
-                                              "type",
-                                              "string"
-                                          )
-                                      }
-                              }
-                              map.forEach { (key, value) ->
-                                  map[key] = sanitizeGeminiSchema(value)
-                              }
-                              JsonObject(map)
-                          }
-                          is JsonArray -> {
-                              JsonArray(
-                                  element.map {
-                                      sanitizeGeminiSchema(it)
-                                  }
-                              )
-                          }
-                          else -> element
-                      }
-                  }
-          '''
+          match = re.search(pattern, text)
 
-          # 3. 在类的最后一个 } 前插入函数
+          if not match:
+              raise SystemExit(
+                  "Gemini parameters block not found"
+              )
+
+          text = (
+              text[:match.start()]
+              + replacement.strip()
+              + text[match.end():]
+          )
+
+
+          # 注入 sanitizer
+          inject = """
+
+        private fun sanitizeGeminiSchema(
+            element: kotlinx.serialization.json.JsonElement
+        ): kotlinx.serialization.json.JsonElement {
+
+            return when (element) {
+
+                is JsonObject -> {
+
+                    val map = element.toMutableMap()
+
+                    val type =
+                        (map["type"] as? JsonPrimitive)
+                            ?.contentOrNull
+
+
+                    if (
+                        type == "array" &&
+                        !map.containsKey("items")
+                    ) {
+                        map["items"] =
+                            buildJsonObject {
+                                put(
+                                    "type",
+                                    "string"
+                                )
+                            }
+                    }
+
+
+                    map.entries.toList().forEach { (key, value) ->
+                        map[key] =
+                            sanitizeGeminiSchema(value)
+                    }
+
+
+                    JsonObject(map)
+                }
+
+
+                is JsonArray -> {
+
+                    JsonArray(
+                        element.map {
+                            sanitizeGeminiSchema(it)
+                        }
+                    )
+                }
+
+
+                else -> element
+            }
+        }
+
+    """
+
+
           last_brace = text.rfind("}")
+
           if last_brace == -1:
-              raise SystemExit("Cannot find class closing brace")
+              raise SystemExit(
+                  "Cannot find class closing brace"
+              )
 
-          text = text[:last_brace] + inject + text[last_brace:]
 
-          # 4. 保存文件
-          path.write_text(text, encoding="utf-8")
-          print("Gemini schema sanitizer injected")
+          text = (
+              text[:last_brace]
+              + inject
+              + text[last_brace:]
+          )
+
+
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
+
+
+          print(
+              "Gemini schema sanitizer injected"
+          )
+
           PYEOF
 
       - name: Verify Installer Before Build
