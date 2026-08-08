@@ -315,14 +315,15 @@ jobs:
 
           text = path.read_text(encoding="utf-8")
 
-          # 已经存在补丁，跳过
+
           if "sanitizeGeminiSchema" in text:
               print(
                   "Gemini schema sanitizer already exists, skip"
               )
               exit(0)
 
-          # 查找旧版工具参数生成位置
+
+          # 优先匹配完整旧版本
           pattern = r'''
           put\(
               key\s*=\s*"parameters",
@@ -346,12 +347,35 @@ jobs:
               re.VERBOSE
           )
 
-          # 上游已经重构或者修复，直接跳过
+
+          # 备用匹配：兼容上游轻微修改格式
           if not match:
               print(
-                  "Gemini parameters block changed by upstream, skip patch"
+                  "Primary Gemini block not found, trying fallback"
               )
-              exit(0)
+
+              fallback = r'''
+              put\(
+                  key\s*=\s*"parameters",
+                  element\s*=\s*
+                  json\.encodeToJsonElement\(tool\.parameters\(\)\)
+              '''
+
+              match = re.search(
+                  fallback,
+                  text,
+                  re.VERBOSE
+              )
+
+
+          if not match:
+              raise SystemExit(
+                  "Gemini parameters block not found, upstream changed too much"
+              )
+
+
+          old = match.group(0)
+
 
           new = """
           put(
@@ -372,11 +396,13 @@ jobs:
           )
           """
 
+
           text = (
               text[:match.start()]
               + new.strip()
               + text[match.end():]
           )
+
 
           inject = r'''
 
@@ -390,8 +416,10 @@ jobs:
 
                       val map = element.toMutableMap()
 
+
                       val type =
                           map["type"] as? JsonPrimitive
+
 
                       if (
                           type?.contentOrNull == "array" &&
@@ -407,6 +435,7 @@ jobs:
                               }
                       }
 
+
                       map.forEach { (key, value) ->
 
                           map[key] =
@@ -414,8 +443,10 @@ jobs:
 
                       }
 
+
                       JsonObject(map)
                   }
+
 
                   is JsonArray -> {
 
@@ -426,19 +457,21 @@ jobs:
                       )
                   }
 
+
                   else -> element
               }
           }
 
           '''
 
+
           last_brace = text.rfind("}")
 
           if last_brace == -1:
-              print(
-                  "Class closing brace not found, skip patch"
+              raise SystemExit(
+                  "Cannot find class closing brace"
               )
-              exit(0)
+
 
           text = (
               text[:last_brace]
@@ -446,14 +479,17 @@ jobs:
               + text[last_brace:]
           )
 
+
           path.write_text(
               text,
               encoding="utf-8"
           )
 
+
           print(
               "Gemini schema sanitizer injected successfully"
           )
+
           PYEOF
 
       - name: Verify Installer Before Build
