@@ -293,8 +293,9 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
 
-      # Step 5.5: Patch Gemini MCP schema compatibility
-      - name: Patch Gemini MCP schema compatibility
+      # Step 5.4: Check Gemini MCP schema compatibility
+      - name: Check Gemini MCP schema compatibility
+        id: gemini_check
         if: steps.check_build.outputs.should_build == 'true'
         shell: bash
         run: |
@@ -305,9 +306,36 @@ jobs:
             exit 1
           fi
 
+          echo "Checking Gemini schema implementation..."
+
+          # 已经存在补丁
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "Gemini schema sanitizer already exists, skip"
+            echo "Gemini schema sanitizer already exists"
+            echo "need_patch=false" >> $GITHUB_OUTPUT
             exit 0
+          fi
+
+          # 检测旧版 schema 生成方式
+          if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
+            echo "Old Gemini schema generator detected"
+            echo "need_patch=true" >> $GITHUB_OUTPUT
+          else
+            echo "Gemini schema appears fixed upstream"
+            echo "need_patch=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Step 5.5: Patch Gemini MCP schema compatibility
+      - name: Patch Gemini MCP schema compatibility
+        if: |
+          steps.check_build.outputs.should_build == 'true' &&
+          steps.gemini_check.outputs.need_patch == 'true'
+        shell: bash
+        run: |
+          FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+
+          if [ ! -f "$FILE" ]; then
+            echo "GoogleProvider.kt not found"
+            exit 1
           fi
 
           python3 <<'PYEOF'
@@ -320,49 +348,56 @@ jobs:
 
           text = path.read_text(encoding="utf-8")
 
+          if "sanitizeGeminiSchema" in text:
+              print("Gemini sanitizer already exists, skip")
+              exit()
 
-          # 替换 parameters schema 生成位置
-          pattern = r'''put\(
-          \s*key\s*=\s*"parameters",
-          \s*element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
-          \s*\.removeElements\(
-          \s*listOf\(
-          \s*"const",
-          \s*"exclusiveMaximum",
-          \s*"exclusiveMinimum",
-          \s*"format",
-          \s*"additionalProperties",
-          \s*"enum",
-          \s*\)
-          \s*\)
-          \s*\)'''
+          pattern = r'''
+          put\(
+              key\s*=\s*"parameters",
+              element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
+                  \.removeElements\(
+                      listOf\(
+                          "const",
+                          "exclusiveMaximum",
+                          "exclusiveMinimum",
+                          "format",
+                          "additionalProperties",
+                          "enum",
+                      \)
+                  \)
+          \)
+          '''
 
-          replacement = """
-                                      put(
-                                          key = "parameters",
-                                          element = sanitizeGeminiSchema(
-                                              json.encodeToJsonElement(tool.parameters())
-                                                  .removeElements(
-                                                      listOf(
-                                                          "const",
-                                                          "exclusiveMaximum",
-                                                          "exclusiveMinimum",
-                                                          "format",
-                                                          "additionalProperties",
-                                                          "enum",
-                                                      )
-                                                  )
-                                          )
-                                      )
-          """
-
-
-          match = re.search(pattern, text)
+          match = re.search(
+              pattern,
+              text,
+              re.VERBOSE
+          )
 
           if not match:
               raise SystemExit(
-                  "Gemini parameters block not found"
+                  "Gemini parameters block not found, upstream may have changed"
               )
+
+          replacement = """
+          put(
+              key = "parameters",
+              element = sanitizeGeminiSchema(
+                  json.encodeToJsonElement(tool.parameters())
+                      .removeElements(
+                          listOf(
+                              "const",
+                              "exclusiveMaximum",
+                              "exclusiveMinimum",
+                              "format",
+                              "additionalProperties",
+                              "enum",
+                          )
+                      )
+              )
+          )
+          """
 
           text = (
               text[:match.start()]
@@ -370,65 +405,58 @@ jobs:
               + text[match.end():]
           )
 
-
-          # 注入 sanitizer
-          inject = """
+          inject = r'''
 
           private fun sanitizeGeminiSchema(
-            element: kotlinx.serialization.json.JsonElement
+              element: kotlinx.serialization.json.JsonElement
           ): kotlinx.serialization.json.JsonElement {
 
-            return when (element) {
+              return when (element) {
 
-                is JsonObject -> {
+                  is JsonObject -> {
 
-                    val map = element.toMutableMap()
+                      val map = element.toMutableMap()
 
-                    val type =
-                        (map["type"] as? JsonPrimitive)
-                            ?.contentOrNull
+                      val type =
+                          map["type"] as? JsonPrimitive
 
+                      if (
+                          type?.contentOrNull == "array" &&
+                          !map.containsKey("items")
+                      ) {
+                          map["items"] =
+                              buildJsonObject {
+                                  put(
+                                      "type",
+                                      "string"
+                                  )
+                              }
+                      }
 
-                    if (
-                        type == "array" &&
-                        !map.containsKey("items")
-                    ) {
-                        map["items"] =
-                            buildJsonObject {
-                                put(
-                                    "type",
-                                    "string"
-                                )
-                            }
-                    }
+                      map.forEach { (key, value) ->
+                          map[key] =
+                              sanitizeGeminiSchema(value)
+                      }
 
-
-                    map.entries.toList().forEach { (key, value) ->
-                        map[key] =
-                            sanitizeGeminiSchema(value)
-                    }
-
-
-                    JsonObject(map)
-                }
+                      JsonObject(map)
+                  }
 
 
-                is JsonArray -> {
+                  is JsonArray -> {
 
-                    JsonArray(
-                        element.map {
-                            sanitizeGeminiSchema(it)
-                        }
-                    )
-                }
+                      JsonArray(
+                          element.map {
+                              sanitizeGeminiSchema(it)
+                          }
+                      )
+                  }
 
 
-                else -> element
-            }
+                  else -> element
+              }
           }
 
-          """
-
+          '''
 
           last_brace = text.rfind("}")
 
@@ -437,24 +465,20 @@ jobs:
                   "Cannot find class closing brace"
               )
 
-
           text = (
               text[:last_brace]
               + inject
               + text[last_brace:]
           )
 
-
           path.write_text(
               text,
               encoding="utf-8"
           )
 
-
           print(
-              "Gemini schema sanitizer injected"
+              "Gemini schema sanitizer injected successfully"
           )
-
           PYEOF
 
       - name: Verify Installer Before Build
