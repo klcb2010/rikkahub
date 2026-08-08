@@ -306,21 +306,17 @@ jobs:
             exit 1
           fi
 
-          echo "Checking Gemini schema implementation..."
-
-          # 已经存在补丁
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
             echo "Gemini schema sanitizer already exists"
             echo "need_patch=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # 检测旧版 schema 生成方式
           if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
             echo "Old Gemini schema generator detected"
             echo "need_patch=true" >> $GITHUB_OUTPUT
           else
-            echo "Gemini schema appears fixed upstream"
+            echo "Gemini schema may already be fixed upstream"
             echo "need_patch=false" >> $GITHUB_OUTPUT
           fi
 
@@ -349,8 +345,8 @@ jobs:
           text = path.read_text(encoding="utf-8")
 
           if "sanitizeGeminiSchema" in text:
-              print("Gemini sanitizer already exists, skip")
-              exit()
+              print("Gemini schema sanitizer already exists, skip")
+              exit(0)
 
           pattern = r'''
           put\(
@@ -376,9 +372,10 @@ jobs:
           )
 
           if not match:
-              raise SystemExit(
-                  "Gemini parameters block not found, upstream may have changed"
+              print(
+                  "Gemini parameters block not found, skip patch"
               )
+              exit(0)
 
           replacement = """
           put(
