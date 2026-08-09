@@ -447,22 +447,32 @@ jobs:
           echo "=== Check Proguard ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
-      #      # Step 6: 检查 Tag 和 Release 是否已存在
+        # Step 6: 检查 Tag 和 Release 是否已存在
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
         id: release_check
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
+
+          echo "Checking GitHub release status: $TAG"
 
           TAG_EXISTS=false
           RELEASE_EXISTS=false
 
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          # 查询远程 Tag
+          if gh api \
+            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
+            >/dev/null 2>&1; then
             TAG_EXISTS=true
           fi
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          # 查询 Release
+          if gh api \
+            "repos/${{ github.repository }}/releases/tags/$TAG" \
+            >/dev/null 2>&1; then
             RELEASE_EXISTS=true
           fi
 
@@ -471,10 +481,10 @@ jobs:
 
           if [ "$TAG_EXISTS" = "true" ] && [ "$RELEASE_EXISTS" = "true" ]; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "Existing release found, skip build."
+            echo "Tag and Release already exist, skip build."
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "Release required."
+            echo "New release required."
           fi
 
 
@@ -490,10 +500,14 @@ jobs:
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
 
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          if gh api \
+            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
+            >/dev/null 2>&1; then
             echo "Tag $TAG already exists, skip."
           else
             git tag "$TAG"
@@ -502,7 +516,7 @@ jobs:
           fi
 
 
-      # Step 9: 发布 Release 并上传 APK
+      # Step 9: 发布 GitHub Release 并上传 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
