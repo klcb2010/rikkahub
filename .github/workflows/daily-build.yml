@@ -447,25 +447,64 @@ jobs:
           echo "=== Check Proguard ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
 
-      # Step 6: 编译未签名 Release APK
-      - name: Build Release APK
+      #      # Step 6: 检查 Tag 和 Release 是否已存在
+      - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
+        id: release_check
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag_name }}"
+
+          TAG_EXISTS=false
+          RELEASE_EXISTS=false
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG_EXISTS=true
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+
+          echo "Tag exists: $TAG_EXISTS"
+          echo "Release exists: $RELEASE_EXISTS"
+
+          if [ "$TAG_EXISTS" = "true" ] && [ "$RELEASE_EXISTS" = "true" ]; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Existing release found, skip build."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release required."
+          fi
+
+
+      # Step 7: 编译未签名 Release APK
+      - name: Build Release APK
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      # Step 7: 自动创建 Git Tag 并推送
+
+      # Step 8: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
-        if: steps.check_build.outputs.should_build == 'true'
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
-          git tag "$TAG" || true
-          git push origin "$TAG" || true
-          echo "Tag $TAG pushed."
 
-      # Step 8: 发布 Release 并上传未签名 APK
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skip."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Tag $TAG pushed."
+          fi
+
+
+      # Step 9: 发布 Release 并上传 APK
       - name: Publish GitHub Release
-        if: steps.check_build.outputs.should_build == 'true'
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag_name }}
@@ -474,4 +513,5 @@ jobs:
           prerelease: false
           body: |
             同步构建 `${{ steps.version.outputs.version_name }}`
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/release/*.apk
