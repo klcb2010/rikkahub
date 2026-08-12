@@ -293,7 +293,7 @@ jobs:
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
       
-        # Step 5.4: 检查上游是否已经修复 Gemini Schema
+              # Step 5.4: 检查上游是否已经修复 Gemini Schema
       - name: Check Gemini schema upstream fix
         if: steps.check_build.outputs.should_build == 'true'
         id: gemini_check
@@ -301,35 +301,72 @@ jobs:
         run: |
           set -e
 
-          FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+          echo "=== Step 5.4: 检查 GoogleProvider.kt ==="
 
-          if [ ! -f "$FILE" ]; then
-            echo "[ERROR] GoogleProvider.kt not found"
+          FILE=$(find . \
+            -type f \
+            -name "GoogleProvider.kt" \
+            -not -path "./.git/*" \
+            | head -n 1)
+
+          if [ -z "$FILE" ]; then
+            echo "[ERROR] GoogleProvider.kt not found."
+            echo "=== 搜索可能的 Google Provider 文件 ==="
+            find . \
+              -type f \
+              -not -path "./.git/*" \
+              | grep -Ei 'google.*provider|provider.*google' \
+              | head -50 || true
             exit 1
           fi
 
-          echo "=== Checking upstream Gemini Schema implementation ==="
+          echo "[OK] GoogleProvider.kt:"
+          echo "     $FILE"
 
-          # 1. 如果上游已经存在我们自己的 sanitizer，说明之前已经打过补丁
+          echo "google_provider_file=$FILE" >> "$GITHUB_OUTPUT"
+
+          echo "=== 检查上游 Gemini Schema 修复 ==="
+
+          # ------------------------------------------------------------
+          # 情况 1：
+          # 上游已经存在 sanitizeGeminiSchema
+          # 说明上游已经包含兼容处理，完全跳过 5.5。
+          # ------------------------------------------------------------
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[OK] Gemini schema sanitizer already exists."
+            echo "[OK] 上游已存在 sanitizeGeminiSchema。"
+            echo "[SKIP] 不执行本地 Gemini 补丁。"
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # 2. 检查上游是否已经出现 array + items 的处理逻辑
-          # 这里只做辅助判断，不因为普通的字符串 "array" / "items"
-          # 出现就直接认为官方已经修复。
-          if grep -Eq '["'"'"']items["'"'"']' "$FILE" &&
-             grep -Eq '["'"'"']array["'"'"']|type.*array|array.*type' "$FILE"; then
-            echo "[OK] Possible upstream Gemini array/items fix detected."
-            echo "[OK] Skip local Gemini compatibility patch."
+          # ------------------------------------------------------------
+          # 情况 2：
+          # 检查上游是否已经明确加入 items 处理。
+          #
+          # 这里不能简单 grep "items" 和 "array" 就认为修复，
+          # 必须同时出现比较明确的 Schema 处理痕迹。
+          # ------------------------------------------------------------
+          if grep -Eq \
+            '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' \
+            "$FILE" \
+            && \
+            grep -Eq \
+            '"array"|type.*array|array.*type|contentOrNull.*array' \
+            "$FILE"; then
+
+            echo "[OK] 检测到上游可能已经处理 array/items。"
+            echo "[SKIP] 不执行本地 Gemini 补丁。"
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "[INFO] Upstream Gemini Schema fix not detected."
-          echo "[INFO] Local compatibility patch will be applied."
+          # ------------------------------------------------------------
+          # 情况 3：
+          # 上游仍然是旧实现，需要执行 5.5。
+          # ------------------------------------------------------------
+          echo "[INFO] 上游尚未检测到 Gemini Schema 修复。"
+          echo "[INFO] 需要执行 Step 5.5。"
+
           echo "need_gemini_patch=true" >> "$GITHUB_OUTPUT"
 
 
@@ -337,36 +374,82 @@ jobs:
       - name: Patch Gemini MCP schema compatibility
         if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.need_gemini_patch == 'true'
         shell: bash
+        env:
+          GEMINI_PROVIDER_FILE: ${{ steps.gemini_check.outputs.google_provider_file }}
         run: |
           set -e
 
-          FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+          FILE="$GEMINI_PROVIDER_FILE"
 
-          if [ ! -f "$FILE" ]; then
-            echo "[ERROR] GoogleProvider.kt not found"
+          echo "=== Step 5.5: 修复 Gemini MCP Schema ==="
+          echo "[INFO] 目标文件: $FILE"
+
+          # ------------------------------------------------------------
+          # 再次确认 5.4 找到的文件仍然存在
+          # ------------------------------------------------------------
+          if [ -z "$FILE" ]; then
+            echo "[ERROR] Step 5.4 没有传递 GoogleProvider.kt 路径。"
             exit 1
           fi
 
-          echo "=== Applying Gemini Schema compatibility patch ==="
+          if [ ! -f "$FILE" ]; then
+            echo "[ERROR] GoogleProvider.kt 不存在:"
+            echo "$FILE"
+            exit 1
+          fi
 
-          # 防止重复注入
+          # ------------------------------------------------------------
+          # 双重保护：
+          # 如果上游在 5.4 之后已经存在 sanitizer，
+          # 不再重复注入。
+          # ------------------------------------------------------------
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[OK] Gemini sanitizer already exists. Skip patch."
+            echo "[OK] Gemini sanitizer 已存在。"
+            echo "[SKIP] 不重复修改。"
             exit 0
           fi
 
+          echo "=== 开始定位 Gemini parameters Schema ==="
+
           python3 <<'PYEOF'
           from pathlib import Path
+          import os
           import re
 
-          path = Path(
-              "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
+          file_path = os.environ.get("GEMINI_PROVIDER_FILE", "")
+
+          if not file_path:
+              raise SystemExit(
+                  "[ERROR] GEMINI_PROVIDER_FILE is empty."
+              )
+
+          path = Path(file_path)
+
+          if not path.exists():
+              raise SystemExit(
+                  f"[ERROR] GoogleProvider.kt not found: {path}"
+              )
+
+          text = path.read_text(
+              encoding="utf-8"
           )
 
-          text = path.read_text(encoding="utf-8")
+          print(f"[INFO] Patching file: {path}")
 
           # ============================================================
-          # 1. 定位 Gemini parameters 原始生成代码
+          # 防止重复注入
+          # ============================================================
+
+          if "sanitizeGeminiSchema" in text:
+              print(
+                  "[OK] sanitizeGeminiSchema already exists."
+              )
+              raise SystemExit(0)
+
+          # ============================================================
+          # 定位原始 parameters 代码
+          #
+          # 不依赖具体缩进，只匹配代码结构。
           # ============================================================
 
           pattern = re.compile(
@@ -374,7 +457,9 @@ jobs:
               put\s*\(
                   \s*key\s*=\s*"parameters"\s*,\s*
                   element\s*=\s*
-                  json\.encodeToJsonElement\s*\(\s*tool\.parameters\(\)\s*\)
+                  json\.encodeToJsonElement\s*\(
+                      \s*tool\.parameters\(\)\s*
+                  \)
                   \s*
                   \.removeElements\s*\(
                       \s*listOf\s*\(
@@ -395,21 +480,23 @@ jobs:
 
           if not match:
               raise SystemExit(
-                  "[ERROR] Gemini parameters source block not found. "
-                  "Upstream source may have changed. "
-                  "Patch aborted safely."
+                  "[ERROR] Gemini parameters block not found.\n"
+                  "上游 GoogleProvider.kt 结构已经发生变化。\n"
+                  "为了避免错误修改，本次补丁已安全终止。"
               )
 
-          print("[OK] Gemini parameters source block found.")
+          print(
+              "[OK] Gemini parameters block found."
+          )
 
           # ============================================================
-          # 2. 替换 parameters 生成逻辑
+          # 替换 parameters 生成逻辑
           # ============================================================
 
           replacement = '''put(
-           key = "parameters",
-              element = sanitizeGeminiSchema(
-                  json.encodeToJsonElement(tool.parameters())
+             key = "parameters",
+             element = sanitizeGeminiSchema(
+                 json.encodeToJsonElement(tool.parameters())
             .removeElements(
                 listOf(
                     "const",
@@ -420,98 +507,127 @@ jobs:
                     "enum",
                 )
             )
-              )
-          )'''
+             )
+                  )'''
 
           text = (
               text[:match.start()]
               + replacement
               + text[match.end():]
+                   )
+
+                   print(
+              "[OK] Gemini parameters generation patched."
           )
 
           # ============================================================
-          # 3. 注入递归 Schema sanitizer
+          # 注入递归 Schema 修复函数
+          #
+          # 只修改：
+          #
+          # {
+          #   "type": "array"
+          # }
+          #
+          # 为：
+          #
+          # {
+          #   "type": "array",
+          #   "items": {
+          #       "type": "string"
+          #   }
+          # }
+          #
+          # 已经存在 items 的 array 完全不修改。
           # ============================================================
 
-          sanitizer = '''
-
-          private fun sanitizeGeminiSchema(
+                   sanitizer = '''
+                   private fun sanitizeGeminiSchema(
               element: kotlinx.serialization.json.JsonElement
-          ): kotlinx.serialization.json.JsonElement {
+                  ): kotlinx.serialization.json.JsonElement {
               return when (element) {
-                  is JsonObject -> {
+          is JsonObject -> {
             val map = element.toMutableMap()
 
-            val type = map["type"]
-                ?.let { it as? JsonPrimitive }
-                ?.contentOrNull
+            val type = (
+                map["type"] as? JsonPrimitive
+            )?.contentOrNull
 
-            if (type == "array" && !map.containsKey("items")) {
+            if (
+                type == "array" &&
+                !map.containsKey("items")
+            ) {
                 map["items"] = buildJsonObject {
-                    put("type", "string")
+                    put(
+                        "type",
+                        "string"
+                    )
                 }
             }
 
-            val sanitized = map.mapValues { (_, value) ->
-                sanitizeGeminiSchema(value)
-            }
+            JsonObject(
+                map.mapValues { (_, value) ->
+                    sanitizeGeminiSchema(value)
+                }
+            )
+                 }
 
-            JsonObject(sanitized)
-                  }
-
-                  is JsonArray -> {
+                 is JsonArray -> {
             JsonArray(
                 element.map { child ->
                     sanitizeGeminiSchema(child)
                 }
             )
-                  }
+                 }
 
-                  else -> element
+                 else -> element
               }
           }
 
           '''
 
           # ============================================================
-          # 4. 插入到 GoogleProvider.kt 最外层 class 的最后一个 }
+          # 找到 Kotlin class 最后的 }
           # ============================================================
 
-          last_brace = text.rfind("}")
+                   last_brace = text.rfind("}")
 
           if last_brace == -1:
               raise SystemExit(
-                  "[ERROR] Cannot find GoogleProvider.kt class closing brace."
+                  "[ERROR] Cannot find class closing brace."
               )
 
-          text = (
+                   text = (
               text[:last_brace]
               + sanitizer
               + text[last_brace:]
-          )
+                   )
 
-          path.write_text(
+                   path.write_text(
               text,
               encoding="utf-8"
-          )
+                   )
 
-          print("[OK] Gemini sanitizer injected successfully.")
+                  print(
+              "[OK] Gemini sanitizer injected successfully."
+                   )
 
-          PYEOF
+                   PYEOF
 
-          echo "=== Verify Gemini patch ==="
+                   echo "=== 验证 Gemini Schema 补丁 ==="
 
-          if ! grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[ERROR] Gemini sanitizer was not injected."
-            exit 1
-          fi
+                   if ! grep -q "sanitizeGeminiSchema" "$FILE"; then
+                     echo "[ERROR] sanitizeGeminiSchema 注入失败。"
+                     exit 1
+                   fi
 
-          if ! grep -q 'element = sanitizeGeminiSchema' "$FILE"; then
-            echo "[ERROR] Gemini parameters are not using sanitizer."
-            exit 1
-          fi
+                   if ! grep -q "element = sanitizeGeminiSchema" "$FILE"; then
+                     echo "[ERROR] Gemini parameters 没有使用 sanitizer。"
+                     exit 1
+                   fi
 
-          echo "[OK] Gemini Schema compatibility patch verified."
+                   echo "[OK] Gemini Schema compatibility patch verified."
+                   echo "=== Step 5.5 完成 ==="
         #  谷歌兼容性检查结束
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
