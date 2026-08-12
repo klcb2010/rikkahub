@@ -640,7 +640,7 @@ jobs:
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
           chmod +x gradlew
-         ./gradlew assembleRelease
+          ./gradlew assembleRelease
 
       # Step 8: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
