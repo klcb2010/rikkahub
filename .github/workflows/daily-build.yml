@@ -292,9 +292,9 @@ jobs:
           grep -R "BundledSkillInstaller.install" \
             app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
           echo "=== BundledSkillInstaller Patch Done ==="
-
-      # === 5.4 Check Gemini schema compatibility ===
-      - name: Check Gemini schema compatibility
+      
+            # Step 5.4: 检查上游是否已经修复 Gemini Schema
+      - name: Check Gemini schema upstream fix
         if: steps.check_build.outputs.should_build == 'true'
         id: gemini_check
         shell: bash
@@ -306,32 +306,31 @@ jobs:
             exit 1
           fi
 
-          # 已经存在 sanitizer，说明已经处理过
+
+          echo "Checking upstream Gemini schema implementation..."
+
+
+          # 如果上游已经存在 sanitizer 或 items 修复逻辑
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "Gemini schema patch already exists"
-            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo "Official sanitizer detected."
+            echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # 检查官方是否已经修改 schema 入口
-          if grep -q "json.encodeToJsonElement(tool.parameters())" "$FILE"; then
-            echo "Gemini schema still needs patch"
-            echo "required=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Upstream Gemini schema fix detected"
-            echo "required=false" >> "$GITHUB_OUTPUT"
+
+          # 检查是否已经直接处理 array items
+          if grep -q "items" "$FILE" && grep -q "array" "$FILE"; then
+            echo "Possible upstream array schema fix detected."
+            echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-            # Step 5.5: Gemini Schema 兼容性修复
-      #
-      # 作用：
-      # 1. 修复 Gemini 要求 array 必须存在 items 的问题
-      # 2. 上游已经修复 items 时，不覆盖上游实现
-      # 3. 不使用 .jsonPrimitive，避免 nx5(JsonObject) 被错误转换
-      # 4. 递归处理 properties / items / anyOf / oneOf / allOf 等 Schema
-      # 5. 如果 GoogleProvider 上游结构发生变化，则不强行改源码
+
+          echo "Old Gemini schema detected."
+          echo "need_gemini_patch=true" >> "$GITHUB_OUTPUT"
+            # Step 5.5: Patch Gemini MCP schema compatibility
       - name: Patch Gemini MCP schema compatibility
-        if: steps.check_build.outputs.should_build == 'true'
+        if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.need_gemini_patch == 'true'
         shell: bash
         run: |
           FILE="ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
@@ -341,251 +340,181 @@ jobs:
             exit 1
           fi
 
-          echo "=== Gemini Schema compatibility check ==="
+
+          if grep -q "sanitizeGeminiSchema" "$FILE"; then
+            echo "Gemini sanitizer already exists, skip."
+            exit 0
+          fi
+
 
           python3 <<'PYEOF'
           from pathlib import Path
           import re
-          import sys
+
 
           path = Path(
               "ai/src/main/java/me/rerere/ai/provider/providers/GoogleProvider.kt"
           )
 
-          text = path.read_text(encoding="utf-8")
 
-          # ------------------------------------------------------------
-          # 1. 判断上游是否已经包含 Schema 修复
-          #
-          # 如果上游已经存在 sanitizeGeminiSchema：
-          #   不重复注入
-          #
-          # 如果上游已经直接在 parameters 上调用了其他 schema
-          # sanitizer，也不要继续盲目修改。
-          # ------------------------------------------------------------
-
-          if "sanitizeGeminiSchema(" in text:
-              print("Upstream Gemini schema sanitizer already exists.")
-              print("Skip local 5.5 patch.")
-              sys.exit(0)
-
-          # ------------------------------------------------------------
-          # 2. 找到原始 parameters Schema
-          #
-          # 只匹配当前 RikkaHub 原始写法。
-          # 如果上游改了这一段：
-          #   不猜
-          #   不强行替换
-          #   直接跳过
-          #
-          # 这样以后官方真正修复时不会被我们的补丁破坏。
-          # ------------------------------------------------------------
-
-          pattern = re.compile(
-              r'''
-              put\s*\(
-                  \s*key\s*=\s*"parameters"\s*,
-                  \s*element\s*=\s*
-                  json\.encodeToJsonElement\s*\(\s*tool\.parameters\(\)\s*\)
-                  \s*
-                  \.removeElements\s*\(
-                      \s*listOf\s*\(
-                          \s*"const"\s*,
-                          \s*"exclusiveMaximum"\s*,
-                          \s*"exclusiveMinimum"\s*,
-                          \s*"format"\s*,
-                          \s*"additionalProperties"\s*,
-                          \s*"enum"\s*
-                      \s*\)
-                  \s*\)
-              \s*\)
-              ''',
-              re.VERBOSE | re.DOTALL
+          text = path.read_text(
+              encoding="utf-8"
           )
 
-          match = pattern.search(text)
+
+          pattern = r'''
+          put\(
+              key\s*=\s*"parameters",
+              element\s*=\s*json\.encodeToJsonElement\(tool\.parameters\(\)\)
+                  \.removeElements\(
+                      listOf\(
+                          "const",
+                          "exclusiveMaximum",
+                          "exclusiveMinimum",
+                          "format",
+                          "additionalProperties",
+                          "enum",
+                      \)
+                  \)
+          \)
+          '''
+
+
+          match = re.search(
+              pattern,
+              text,
+              re.VERBOSE
+          )
+
 
           if not match:
-              print("Gemini parameters source changed.")
-              print("Skip local 5.5 patch.")
-              print("Upstream may already contain a fix.")
-              sys.exit(0)
-
-          # ------------------------------------------------------------
-          # 3. 只把原来的 parameters 包起来
-          # ------------------------------------------------------------
-
-          replacement = '''
-          put(
-              key = "parameters",
-              element = sanitizeGeminiSchema(
-                  json.encodeToJsonElement(tool.parameters())
-                      .removeElements(
-                          listOf(
-                              "const",
-                              "exclusiveMaximum",
-                              "exclusiveMinimum",
-                              "format",
-                              "additionalProperties",
-                              "enum",
-                          )
-                      )
+              raise SystemExit(
+                  "Gemini parameters block not found"
               )
-          )
-          '''
+
+
+          replacement = """
+put(
+    key = "parameters",
+    element = sanitizeGeminiSchema(
+        json.encodeToJsonElement(tool.parameters())
+            .removeElements(
+                listOf(
+                    "const",
+                    "exclusiveMaximum",
+                    "exclusiveMinimum",
+                    "format",
+                    "additionalProperties",
+                    "enum",
+                )
+            )
+    )
+)
+"""
+
 
           text = (
               text[:match.start()]
-              + replacement.strip()
-              + text[match.end():]
+              +
+              replacement.strip()
+              +
+              text[match.end():]
           )
 
-          # ------------------------------------------------------------
-          # 4. 注入安全的 Schema sanitizer
-          #
-          # 关键：
-          #
-          # 不允许：
-          #
-          #     element.jsonPrimitive
-          #
-          # 因为 Schema 中：
-          #
-          #     type       -> JsonPrimitive
-          #     properties -> JsonObject
-          #     items      -> JsonObject
-          #
-          # 如果把 JsonObject 当 JsonPrimitive 处理，
-          # kotlinx.serialization 就会报：
-          #
-          #     Element class nx5 is not a JsonPrimitive
-          #
-          # 所以这里只使用：
-          #
-          #     is JsonPrimitive
-          #
-          # 做类型判断。
-          # ------------------------------------------------------------
 
-          sanitizer = r'''
-          private fun sanitizeGeminiSchema(
-              element: kotlinx.serialization.json.JsonElement
-          ): kotlinx.serialization.json.JsonElement {
+          inject = r'''
 
-              return when (element) {
+private fun sanitizeGeminiSchema(
+    element: kotlinx.serialization.json.JsonElement
+): kotlinx.serialization.json.JsonElement {
 
-                  is kotlinx.serialization.json.JsonObject -> {
-                      val result = element.toMutableMap()
+    return when (element) {
 
-                      /*
-                       * 只在 type 真的是 JsonPrimitive 时读取它。
-                       *
-                       * 千万不要写：
-                       *
-                       *     result["type"]?.jsonPrimitive
-                       *
-                       * 因为混淆后的 kotlinx.serialization 会直接把
-                       * JsonObject(nx5) 转 JsonPrimitive，从而崩溃。
-                       */
-                      val typeElement = result["type"]
+        is JsonObject -> {
 
-                      val typeValue =
-                          if (typeElement is kotlinx.serialization.json.JsonPrimitive) {
-                              typeElement.contentOrNull
-                          } else {
-                              null
-                          }
+            val map = element.toMutableMap()
 
-                      /*
-                       * Gemini 要求：
-                       *
-                       *     {
-                       *       "type": "array",
-                       *       "items": {...}
-                       *     }
-                       *
-                       * 如果上游已经提供 items：
-                       *     完全保留。
-                       *
-                       * 如果确实缺失：
-                       *     才补一个最保守的 string items。
-                       */
-                      if (
-                          typeValue == "array" &&
-                          !result.containsKey("items")
-                      ) {
-                          result["items"] = buildJsonObject {
-                              put("type", "string")
-                          }
-                      }
 
-                      /*
-                       * 递归处理整个 Schema。
-                       *
-                       * 特别包括：
-                       *   properties
-                       *   items
-                       *   anyOf
-                       *   oneOf
-                       *   allOf
-                       *   additionalProperties
-                       *   其他嵌套 Schema
-                       */
-                      val entries = result.toList()
+            val type =
+                map["type"]
+                    ?.toString()
+                    ?.replace("\"", "")
 
-                      for ((key, value) in entries) {
-                          result[key] = sanitizeGeminiSchema(value)
-                      }
 
-                      JsonObject(result)
-                  }
+            if (
+                type == "array" &&
+                !map.containsKey("items")
+            ) {
 
-                  is kotlinx.serialization.json.JsonArray -> {
-                      JsonArray(
-                          element.map { child ->
-                              sanitizeGeminiSchema(child)
-                          }
-                      )
-                  }
+                map["items"] =
+                    buildJsonObject {
+                        put(
+                            "type",
+                            "string"
+                        )
+                    }
+            }
 
-                  /*
-                   * JsonPrimitive / JsonNull：
-                   * 原样返回。
-                   *
-                   * 不进行任何 .jsonPrimitive 转换。
-                   */
-                  else -> element
-              }
-          }
 
-          '''
+            map.forEach { (key, value) ->
 
-          # ------------------------------------------------------------
-          # 5. 插入到 GoogleProvider class 最后一个 } 之前
-          # ------------------------------------------------------------
+                map[key] =
+                    sanitizeGeminiSchema(value)
 
-          last_brace = text.rfind("}")
+            }
 
-          if last_brace == -1:
-              print("Cannot find GoogleProvider class closing brace.")
-              sys.exit(1)
+
+            JsonObject(map)
+        }
+
+
+        is JsonArray -> {
+
+            JsonArray(
+                element.map {
+                    sanitizeGeminiSchema(it)
+                }
+            )
+        }
+
+
+        else -> element
+    }
+}
+
+'''
+
+
+          pos = text.rfind("}")
+
+
+          if pos == -1:
+              raise SystemExit(
+                  "Class end not found"
+              )
+
 
           text = (
-              text[:last_brace]
-              + sanitizer
-              + text[last_brace:]
+              text[:pos]
+              +
+              inject
+              +
+              text[pos:]
           )
+
 
           path.write_text(
               text,
               encoding="utf-8"
           )
 
-          print("Gemini schema sanitizer injected successfully.")
-          print("The sanitizer is JsonPrimitive-safe.")
-          print("Existing upstream items will be preserved.")
-          PYEOF
 
+          print(
+              "Gemini sanitizer injected."
+          )
+
+          PYEOF
+        #  谷歌兼容性检查结束
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
