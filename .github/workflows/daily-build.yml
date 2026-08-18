@@ -212,6 +212,16 @@ jobs:
           else
             echo "[WARN] BundledSkillInstaller missing"
           fi
+          echo "=== Replace UpdateChecker.kt ==="
+          if [ -f "mod/UpdateChecker.kt" ]; then
+            TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
+            mkdir -p "$(dirname "$TARGET")"
+            cp -f mod/UpdateChecker.kt "$TARGET"
+            echo "[OK] UpdateChecker.kt replaced → 使用自己的 GitHub Releases"
+            grep -n "api.github.com/repos/klcb2010" "$TARGET" || echo "[WARN] API URL 可能不对"
+          else
+            echo "[WARN] mod/UpdateChecker.kt missing"
+          fi
           echo "=== Inject Installer Into RikkaHubApp ==="
           python3 << 'PYEOF'
           from pathlib import Path
@@ -611,6 +621,8 @@ jobs:
           grep -R "BundledSkillInstaller.install" app/src/main/java || true
           echo "=== Check Proguard ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
+          echo "=== Check UpdateChecker ==="
+          grep -n "api.github.com/repos/klcb2010" app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt || echo "[WARN] UpdateChecker 未替换成功"
 
       # Step 6: 检查 Tag 和 Release 是否已存在
       - name: Check Existing Release
