@@ -69,7 +69,11 @@ class UpdateChecker(private val client: OkHttpClient) {
         val root = json.parseToJsonElement(body).jsonObject
         val allAssets = root["assets"]?.jsonArray ?: emptyList()
         return UpdateInfo(
-            version = root["tag_name"]?.jsonPrimitive?.contentOrNull?.removePrefix("v") ?: "0.0.0",
+            version = root["tag_name"]?.jsonPrimitive?.contentOrNull
+             ?.trim()
+             ?.removePrefix("v")
+             ?.removePrefix("V")
+             ?: "0.0.0",
             publishedAt = root["published_at"]?.jsonPrimitive?.contentOrNull ?: "",
             changelog = root["body"]?.jsonPrimitive?.contentOrNull ?: "",
             downloads = filterByAbi(allAssets).mapNotNull { asset ->
