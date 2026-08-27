@@ -21,21 +21,23 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.common.http.await
-import me.rerere.rikkahub.AppScope          // ← 加回来
+import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
 
+/**
+ * 直接拉取 GitHub Releases API 的最近发布，替代原作者的 updates.rikka-ai.com
+ */
 private const val API_URL = "https://api.github.com/repos/klcb2010/rikkahub/releases/latest"
 
 class UpdateChecker(
     private val client: OkHttpClient,
-    appScope: AppScope,                   // ← 加回 appScope 参数
+    appScope: AppScope,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ← 关键：补回 updateState，和上游保持一致
     val updateState: StateFlow<UiState<UpdateInfo>> = checkUpdate().stateIn(
         scope = appScope,
         started = SharingStarted.Lazily,
@@ -72,22 +74,15 @@ class UpdateChecker(
         emit(UiState.Error(it))
     }.flowOn(Dispatchers.IO)
 
-    // ... 后面的 parseGithubRelease / filterByAbi / formatSize / downloadUpdate
-    //     以及 UpdateDownload、UpdateInfo、Version 等数据类保持你现在的即可
-}
-    /**
-     * 解析 GitHub Releases API 响应为 UpdateInfo
-     * GitHub 响应结构: https://docs.github.com/rest/releases/releases#get-the-latest-release
-     */
     private fun parseGithubRelease(body: String): UpdateInfo {
         val root = json.parseToJsonElement(body).jsonObject
         val allAssets = root["assets"]?.jsonArray ?: emptyList()
         return UpdateInfo(
             version = root["tag_name"]?.jsonPrimitive?.contentOrNull
-             ?.trim()
-             ?.removePrefix("v")
-             ?.removePrefix("V")
-             ?: "0.0.0",
+                ?.trim()
+                ?.removePrefix("v")
+                ?.removePrefix("V")
+                ?: "0.0.0",
             publishedAt = root["published_at"]?.jsonPrimitive?.contentOrNull ?: "",
             changelog = root["body"]?.jsonPrimitive?.contentOrNull ?: "",
             downloads = filterByAbi(allAssets).mapNotNull { asset ->
@@ -104,10 +99,6 @@ class UpdateChecker(
         )
     }
 
-    /**
-     * 按设备 ABI 过滤 APK，避免弹窗显示 3 个装不了的包
-     * 匹配不到（如老设备）则全部显示兜底
-     */
     private fun filterByAbi(assets: List<kotlinx.serialization.json.JsonElement>): List<kotlinx.serialization.json.JsonElement> {
         val supportedAbis = Build.SUPPORTED_ABIS.toSet()
         val matched = assets.filter { asset ->
@@ -132,25 +123,18 @@ class UpdateChecker(
     fun downloadUpdate(context: Context, download: UpdateDownload) {
         runCatching {
             val request = DownloadManager.Request(download.url.toUri()).apply {
-                // 设置下载时通知栏的标题和描述
                 setTitle(download.name)
                 setDescription("正在下载更新包...")
-                // 下载完成后通知栏可见
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                // 允许在移动网络和WiFi下下载
                 setAllowedNetworkTypes(DownloadManager.Request.NETWORK_WIFI or DownloadManager.Request.NETWORK_MOBILE)
-                // 设置文件保存路径
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, download.name)
-                // 允许下载的文件类型
                 setMimeType("application/vnd.android.package-archive")
             }
-            // 获取系统的DownloadManager
             val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
-            // 你可以保存返回的downloadId到本地，以便后续查询下载进度或状态
         }.onFailure {
             Toast.makeText(context, "Failed to update", Toast.LENGTH_SHORT).show()
-            context.openUrl(download.url) // 跳转到下载页面
+            context.openUrl(download.url)
         }
     }
 }
@@ -170,22 +154,11 @@ data class UpdateInfo(
     val downloads: List<UpdateDownload>
 )
 
-/**
- * 版本号值类，封装版本号字符串并提供比较功能
- *
- * 支持完整的 SemVer 规范：MAJOR.MINOR.PATCH[-prerelease][+build]
- * - 预发布版本优先级低于正式版：1.0.0-alpha < 1.0.0
- * - 预发布标识符按段逐个比较：数字按数值比较，字符串按字典序比较
- * - 预发布标识符优先级：alpha < beta < rc（通过字典序自然满足）
- * - build metadata（+号后面的部分）不影响优先级比较
- */
 @JvmInline
 value class Version(val value: String) : Comparable<Version> {
 
     private fun parse(): ParsedVersion {
-        // 去掉 build metadata（+号后面的部分）
         val withoutBuild = value.split("+").first()
-        // 分离主版本号和预发布标识符
         val hyphenIndex = withoutBuild.indexOf('-')
         val (coreStr, prereleaseStr) = if (hyphenIndex >= 0) {
             withoutBuild.substring(0, hyphenIndex) to withoutBuild.substring(hyphenIndex + 1)
@@ -201,7 +174,6 @@ value class Version(val value: String) : Comparable<Version> {
         val a = this.parse()
         val b = other.parse()
 
-        // 先比较主版本号
         val maxLen = maxOf(a.core.size, b.core.size)
         for (i in 0 until maxLen) {
             val ap = if (i < a.core.size) a.core[i] else 0
@@ -209,8 +181,6 @@ value class Version(val value: String) : Comparable<Version> {
             if (ap != bp) return ap.compareTo(bp)
         }
 
-        // 主版本号相同时比较预发布标识符
-        // 有预发布标识符的版本优先级低于没有的：1.0.0-alpha < 1.0.0
         return when {
             a.prerelease == null && b.prerelease == null -> 0
             a.prerelease != null && b.prerelease == null -> -1
@@ -227,7 +197,6 @@ value class Version(val value: String) : Comparable<Version> {
         private fun comparePrerelease(a: List<String>, b: List<String>): Int {
             val maxLen = maxOf(a.size, b.size)
             for (i in 0 until maxLen) {
-                // 字段少的优先级更低：1.0.0-alpha < 1.0.0-alpha.1
                 if (i >= a.size) return -1
                 if (i >= b.size) return 1
 
@@ -235,12 +204,9 @@ value class Version(val value: String) : Comparable<Version> {
                 val bNum = b[i].toIntOrNull()
 
                 val cmp = when {
-                    // 都是字：按数值比较
                     aNum != null && bNum != null -> aNum.compareTo(bNum)
-                    // 数字优先级低于字符串
                     aNum != null -> -1
                     bNum != null -> 1
-                    // 都是字符串：按字典序比较
                     else -> a[i].compareTo(b[i])
                 }
                 if (cmp != 0) return cmp
@@ -255,7 +221,5 @@ private data class ParsedVersion(
     val prerelease: List<String>?,
 )
 
-// 扩展操作符函数，使比较更直观
 operator fun String.compareTo(other: Version): Int = Version(this).compareTo(other)
 operator fun Version.compareTo(other: String): Int = this.compareTo(Version(other))
-
