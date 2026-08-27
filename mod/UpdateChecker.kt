@@ -8,9 +8,12 @@ import android.widget.Toast
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -18,20 +21,28 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.common.http.await
+import me.rerere.rikkahub.AppScope          // ← 加回来
 import me.rerere.rikkahub.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
 
-/**
- * 直接拉取 GitHub Releases API 的最近发布，替代原作者的 updates.rikka-ai.com
- */
 private const val API_URL = "https://api.github.com/repos/klcb2010/rikkahub/releases/latest"
 
-class UpdateChecker(private val client: OkHttpClient) {
+class UpdateChecker(
+    private val client: OkHttpClient,
+    appScope: AppScope,                   // ← 加回 appScope 参数
+) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow {
+    // ← 关键：补回 updateState，和上游保持一致
+    val updateState: StateFlow<UiState<UpdateInfo>> = checkUpdate().stateIn(
+        scope = appScope,
+        started = SharingStarted.Lazily,
+        initialValue = UiState.Loading,
+    )
+
+    private fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow {
         emit(UiState.Loading)
         emit(
             UiState.Success(
@@ -61,6 +72,9 @@ class UpdateChecker(private val client: OkHttpClient) {
         emit(UiState.Error(it))
     }.flowOn(Dispatchers.IO)
 
+    // ... 后面的 parseGithubRelease / filterByAbi / formatSize / downloadUpdate
+    //     以及 UpdateDownload、UpdateInfo、Version 等数据类保持你现在的即可
+}
     /**
      * 解析 GitHub Releases API 响应为 UpdateInfo
      * GitHub 响应结构: https://docs.github.com/rest/releases/releases#get-the-latest-release
