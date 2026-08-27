@@ -1,4 +1,4 @@
-name: Release
+name: Signed Release
 on:
   schedule:
     - cron: '0 18 * * *'
@@ -20,7 +20,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Step 1: 备份保护文件，同步上游仓库并还原保护文件
       - name: Sync Upstream with Protected Files
         id: sync
         run: |
@@ -57,7 +56,6 @@ jobs:
             echo "has_sync_changes=false" >> $GITHUB_OUTPUT
           fi
 
-      # Step 2: 获取版本号与 Tag 判定
       - name: Extract Version Name & Check Tag
         id: version
         run: |
@@ -77,7 +75,6 @@ jobs:
             echo "New Tag ${TAG_NAME} will be created."
           fi
 
-      # Step 3: 确定是否继续编译
       - name: Check Should Build
         id: check_build
         run: |
@@ -125,7 +122,6 @@ jobs:
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
-      # Step 4: 移除 BaselineProfile 模块
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -136,7 +132,6 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
 
-      # Step 5: 修改 app/build.gradle.kts 与注入 Custom Mods
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -146,18 +141,13 @@ jobs:
           gradle_path = "app/build.gradle.kts"
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
-          # 1. plugins 删除
           content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
           content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
-          # 2. 删除注释
           content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
           content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
-          # 3. signingConfigs 整段删除
           content = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', content)
-          # 4. buildTypes 清理
           content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
           content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
-          # 强制开启混淆
           if "isMinifyEnabled" in content:
               content = re.sub(r'isMinifyEnabled\s*=\s*(true|false)', 'isMinifyEnabled = true', content)
           else:
@@ -166,16 +156,10 @@ jobs:
               content = re.sub(r'isShrinkResources\s*=\s*(true|false)', 'isShrinkResources = true', content)
           else:
               content = re.sub(r'(release\s*\{)', r'\1\n isShrinkResources = true', content, count=1)
-          # 添加 proguardFiles
           if "proguardFiles(" not in content:
-              print("[INFO] Adding proguardFiles")
               proguard_block = '\n proguardFiles(\n getDefaultProguardFile("proguard-android-optimize.txt"),\n "proguard-rules.pro"\n )'
               content = re.sub(r'(release\s*\{)', r'\1' + proguard_block, content, count=1)
-          else:
-              print("[OK] proguardFiles already exists")
-          # 5. sourceSets 删除
           content = re.sub(r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}', '', content)
-          # 6. Firebase 清理
           content = re.sub(r'\s*// Firebase', '', content)
           content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
           content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
@@ -199,30 +183,25 @@ jobs:
           if [ -d "mod/skills" ]; then
             cp -rf mod/skills/* app/src/main/assets/skills/
             echo "[OK] skills copied"
-            find app/src/main/assets/skills -maxdepth 2 -type f
           else
             echo "[WARN] mod/skills missing"
           fi
-          echo "=== Copy BundledSkillInstaller ==="
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
-            cp -f mod/BundledSkillInstaller.java \
-              app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
+            cp -f mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
             echo "[OK] BundledSkillInstaller copied"
           else
             echo "[WARN] BundledSkillInstaller missing"
           fi
-          echo "=== Replace UpdateChecker.kt ==="
           if [ -f "mod/UpdateChecker.kt" ]; then
             TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
             mkdir -p "$(dirname "$TARGET")"
             cp -f mod/UpdateChecker.kt "$TARGET"
-            echo "[OK] UpdateChecker.kt replaced → 使用自己的 GitHub Releases"
+            echo "[OK] UpdateChecker.kt replaced"
             grep -n "api.github.com/repos/klcb2010" "$TARGET" || echo "[WARN] API URL 可能不对"
           else
             echo "[WARN] mod/UpdateChecker.kt missing"
           fi
-          echo "=== Inject Installer Into RikkaHubApp ==="
           python3 << 'PYEOF'
           from pathlib import Path
           import re
@@ -237,34 +216,21 @@ jobs:
           else:
               pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
               if re.search(pattern, text):
-                  text = re.sub(
-                      pattern,
-                      r'\1\n\n' + call,
-                      text,
-                      count=1
-                  )
+                  text = re.sub(pattern, r'\1\n\n' + call, text, count=1)
                   path.write_text(text, encoding="utf-8")
                   print("[OK] installer injected")
               else:
                   print("[WARN] onCreate marker not found")
           PYEOF
-          echo "=== 4. Patch Default Assistants in PreferencesStore.kt ==="
           python3 << 'PYEOF'
           from pathlib import Path
           import re
-          # 1. 允许删除默认助手 (解除 UI 限制)
           for path in Path("app/src/main/java").rglob("*.kt"):
               text = path.read_text(encoding="utf-8")
               if "DEFAULT_ASSISTANTS_IDS" in text:
-                  print("[FOUND DEFAULT_ASSISTANTS_IDS]", path)
-                  text = re.sub(
-                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
-                      'true',
-                      text
-                  )
+                  text = re.sub(r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS', 'true', text)
                   path.write_text(text, encoding="utf-8")
-                  print("[PATCHED] Unlocked delete button")
-          # 2. 移除 DEFAULT_ASSISTANTS 里的第二个默认助手 (Gemini 预设)
+                  print("[PATCHED]", path)
           pref_path = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
           if pref_path.exists():
               text = pref_path.read_text(encoding="utf-8")
@@ -279,91 +245,41 @@ jobs:
               if re.search(pattern, text):
                   text = re.sub(pattern, replacement, text)
                   pref_path.write_text(text, encoding="utf-8")
-                  print("[PATCHED] Trimmed DEFAULT_ASSISTANTS to 1 single assistant")
-              else:
-                  print("[WARN] DEFAULT_ASSISTANTS pattern not found in PreferencesStore.kt")
+                  print("[PATCHED] DEFAULT_ASSISTANTS")
           PYEOF
-          echo "=== Add R8 Keep Rules ==="
           touch app/proguard-rules.pro
           if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
             cat >> app/proguard-rules.pro << 'RULESEOF'
-          # ===========================
-          # Bundled Skills Installer
-          # ===========================
           -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
           -keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
           -keep class me.rerere.rikkahub.RikkaHubApp { *; }
           -keep class me.rerere.rikkahub.data.ai.tools.** { *; }
           RULESEOF
           fi
-          echo "=== Verify Proguard Rules ==="
-          grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
-          echo "=== Verify Installer Injection ==="
-          grep -R "BundledSkillInstaller.install" \
-            app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt || true
-          echo "=== BundledSkillInstaller Patch Done ==="
 
-      # Step 5.4: 检查上游是否已经修复 Gemini Schema
       - name: Check Gemini schema upstream fix
         if: steps.check_build.outputs.should_build == 'true'
         id: gemini_check
         shell: bash
         run: |
           set -e
-
-          echo "=== Step 5.4: 检查 GoogleProvider.kt ==="
-
-          FILE=$(find . \
-            -type f \
-            -name "GoogleProvider.kt" \
-            -not -path "./.git/*" \
-            | head -n 1)
-
+          FILE=$(find . -type f -name "GoogleProvider.kt" -not -path "./.git/*" | head -n 1)
           if [ -z "$FILE" ]; then
             echo "[ERROR] GoogleProvider.kt not found."
-            echo "=== 搜索可能的 Google Provider 文件 ==="
-            find . \
-              -type f \
-              -not -path "./.git/*" \
-              | grep -Ei 'google.*provider|provider.*google' \
-              | head -50 || true
             exit 1
           fi
-
-          echo "[OK] GoogleProvider.kt:"
-          echo "     $FILE"
-
           echo "google_provider_file=$FILE" >> "$GITHUB_OUTPUT"
-
-          echo "=== 检查上游 Gemini Schema 修复 ==="
-
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[OK] 上游已存在 sanitizeGeminiSchema。"
-            echo "[SKIP] 不执行本地 Gemini 补丁。"
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          if grep -Eq \
-            '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' \
-            "$FILE" \
-            && \
-            grep -Eq \
-            '"array"|type.*array|array.*type|contentOrNull.*array' \
-            "$FILE"; then
-
-            echo "[OK] 检测到上游可能已经处理 array/items。"
-            echo "[SKIP] 不执行本地 Gemini 补丁。"
+          if grep -Eq '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' "$FILE" \
+            && grep -Eq '"array"|type.*array|array.*type|contentOrNull.*array' "$FILE"; then
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-
-          echo "[INFO] 上游尚未检测到 Gemini Schema 修复。"
-          echo "[INFO] 需要执行 Step 5.5。"
-
           echo "need_gemini_patch=true" >> "$GITHUB_OUTPUT"
 
-      # Step 5.5: Patch Gemini MCP schema compatibility
       - name: Patch Gemini MCP schema compatibility
         if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.need_gemini_patch == 'true'
         shell: bash
@@ -371,54 +287,21 @@ jobs:
           GEMINI_PROVIDER_FILE: ${{ steps.gemini_check.outputs.google_provider_file }}
         run: |
           set -euo pipefail
-
           FILE="$GEMINI_PROVIDER_FILE"
-
-          echo "=== Step 5.5: 修复 Gemini MCP Schema ==="
-          echo "[INFO] 目标文件: $FILE"
-
-          if [ -z "$FILE" ]; then
-            echo "[ERROR] Step 5.4 没有传递 GoogleProvider.kt 路径。"
+          if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+            echo "[ERROR] GoogleProvider.kt missing"
             exit 1
           fi
-
-          if [ ! -f "$FILE" ]; then
-            echo "[ERROR] GoogleProvider.kt 不存在:"
-            echo "$FILE"
-            exit 1
-          fi
-
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[OK] Gemini sanitizer 已存在。"
-            echo "[SKIP] 不重复修改。"
             exit 0
           fi
-
-          echo "=== 开始定位 Gemini parameters Schema ==="
-
           python3 <<'PYEOF'
           from pathlib import Path
-          import os
-          import re
-
-          file_path = os.environ.get("GEMINI_PROVIDER_FILE", "")
-
-          if not file_path:
-              raise SystemExit("[ERROR] GEMINI_PROVIDER_FILE is empty.")
-
-          path = Path(file_path)
-
-          if not path.exists():
-              raise SystemExit(f"[ERROR] GoogleProvider.kt not found: {path}")
-
+          import os, re
+          path = Path(os.environ["GEMINI_PROVIDER_FILE"])
           text = path.read_text(encoding="utf-8")
-
-          print(f"[INFO] Patching file: {path}")
-
           if "sanitizeGeminiSchema" in text:
-              print("[OK] sanitizeGeminiSchema already exists.")
               raise SystemExit(0)
-
           pattern = re.compile(
               r'''
               put\s*\(
@@ -442,18 +325,9 @@ jobs:
               ''',
               re.VERBOSE | re.DOTALL,
           )
-
           match = pattern.search(text)
-
           if not match:
-              raise SystemExit(
-                  "[ERROR] Gemini parameters block not found.\n"
-                  "上游 GoogleProvider.kt 结构已经发生变化。\n"
-                  "为了避免错误修改，本次补丁已安全终止。"
-              )
-
-          print("[OK] Gemini parameters block found.")
-
+              raise SystemExit("[ERROR] Gemini parameters block not found.")
           replacement = '''put(
              key = "parameters",
              element = sanitizeGeminiSchema(
@@ -470,11 +344,7 @@ jobs:
                  )
               )
           )'''
-
           text = text[:match.start()] + replacement + text[match.end():]
-
-          print("[OK] Gemini parameters generation patched.")
-
           sanitizer = '''
           private fun sanitizeGeminiSchema(
              element: kotlinx.serialization.json.JsonElement
@@ -482,87 +352,35 @@ jobs:
               return when (element) {
              is JsonObject -> {
             val map = element.toMutableMap()
-
-            val type = (
-                map["type"] as? JsonPrimitive
-            )?.contentOrNull
-
-            if (
-                type == "array" &&
-                !map.containsKey("items")
-            ) {
-                map["items"] = buildJsonObject {
-                    put(
-                        "type",
-                        "string"
-                    )
-                }
+            val type = (map["type"] as? JsonPrimitive)?.contentOrNull
+            if (type == "array" && !map.containsKey("items")) {
+                map["items"] = buildJsonObject { put("type", "string") }
             }
-
-            JsonObject(
-                map.mapValues { (_, value) ->
-                    sanitizeGeminiSchema(value)
-                     }
-                 )
+            JsonObject(map.mapValues { (_, value) -> sanitizeGeminiSchema(value) })
                   }
-
              is JsonArray -> {
-            JsonArray(
-                element.map { child ->
-                    sanitizeGeminiSchema(child)
-                               }
-                         )
+            JsonArray(element.map { child -> sanitizeGeminiSchema(child) })
                   }
-
                        else -> element
                    }
                }
           '''
-
           last_brace = text.rfind("}")
-
           if last_brace == -1:
               raise SystemExit("[ERROR] Cannot find class closing brace.")
-
-          text = (
-              text[:last_brace]
-              + sanitizer
-              + text[last_brace:]
-          )
-
+          text = text[:last_brace] + sanitizer + text[last_brace:]
           path.write_text(text, encoding="utf-8")
-
-          print("[OK] Gemini sanitizer injected successfully.")
+          print("[OK] Gemini sanitizer injected")
           PYEOF
-
-          echo "=== 验证 Gemini Schema 补丁 ==="
-
-          if ! grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "[ERROR] sanitizeGeminiSchema 注入失败。"
-            exit 1
-          fi
-
-          if ! grep -q "element = sanitizeGeminiSchema" "$FILE"; then
-            echo "[ERROR] Gemini parameters 没有使用 sanitizer。"
-            exit 1
-          fi
-
-          echo "[OK] Gemini Schema compatibility patch verified."
-          echo "=== Step 5.5 完成 ==="
 
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
-          echo "=== Check Java Source ==="
           grep -R "class BundledSkillInstaller" app/src/main/java || true
-          echo "=== Check Install Call ==="
           grep -R "BundledSkillInstaller.install" app/src/main/java || true
-          echo "=== Check Proguard ==="
           grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
-          echo "=== Check UpdateChecker ==="
           grep -n "api.github.com/repos/klcb2010" app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt || echo "[WARN] UpdateChecker 未替换成功"
 
-      # Step 6: 检查 Tag 和 Release 是否已存在
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
         id: release_check
@@ -571,43 +389,40 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
-
-          echo "Checking GitHub release status: $TAG"
-
           TAG_EXISTS=false
           RELEASE_EXISTS=false
-
-          if gh api \
-            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
-            >/dev/null 2>&1; then
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
             TAG_EXISTS=true
           fi
-
-          if gh api \
-            "repos/${{ github.repository }}/releases/tags/$TAG" \
-            >/dev/null 2>&1; then
+          if gh api "repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then
             RELEASE_EXISTS=true
           fi
-
           echo "Tag exists: $TAG_EXISTS"
           echo "Release exists: $RELEASE_EXISTS"
-
           if [ "$TAG_EXISTS" = "true" ] && [ "$RELEASE_EXISTS" = "true" ]; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "Tag and Release already exist, skip build."
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "New release required."
           fi
 
-      # ========== 签名：解码 keystore + 注入 signingConfigs ==========
       - name: Decode keystore
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > app/rikkahub-release.jks
+          set -e
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: KEYSTORE_BASE64 secret is empty"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | tr -d ' \n\r\t' | base64 -d > app/rikkahub-release.jks
           ls -la app/rikkahub-release.jks
+          SIZE=$(stat -c%s app/rikkahub-release.jks)
+          echo "keystore size: $SIZE bytes"
+          if [ "$SIZE" -lt 100 ]; then
+            echo "ERROR: keystore too small, base64 likely wrong"
+            exit 1
+          fi
 
       - name: Inject signing config
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
@@ -618,19 +433,13 @@ jobs:
         run: |
           python3 << 'PYEOF'
           from pathlib import Path
-          import os
-          import re
-
+          import os, re
           path = Path("app/build.gradle.kts")
           text = path.read_text(encoding="utf-8")
-
-          # 去掉可能残留的 signingConfigs
           text = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', text)
-
           store_pass = os.environ["KEYSTORE_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
           key_alias = os.environ["KEY_ALIAS"].replace("\\", "\\\\").replace("\"", "\\\"")
           key_pass = os.environ["KEY_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
-
           signing_block = f'''
           signingConfigs {{
           create("release") {{
@@ -638,15 +447,12 @@ jobs:
             storePassword = "{store_pass}"
             keyAlias = "{key_alias}"
             keyPassword = "{key_pass}"
-          }}
+           }}
           }}
           '''
-
-          if "android {" in text:
-              text = text.replace("android {", "android {" + signing_block, 1)
-          else:
-              raise SystemExit("android { not found in app/build.gradle.kts")
-
+          if "android {" not in text:
+              raise SystemExit("android { not found")
+          text = text.replace("android {", "android {" + signing_block, 1)
           if 'signingConfig = signingConfigs.getByName("release")' not in text:
               text = re.sub(
                   r'(release\s*\{)',
@@ -654,7 +460,6 @@ jobs:
                   text,
                   count=1,
               )
-
           path.write_text(text, encoding="utf-8")
           print("[OK] signingConfigs injected")
           PYEOF
@@ -664,7 +469,6 @@ jobs:
         run: |
           grep -n "signingConfigs\|signingConfig\|rikkahub-release.jks" app/build.gradle.kts || true
 
-      # Step 7: 编译已签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
@@ -681,14 +485,9 @@ jobs:
             APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
             if [ -n "$APKSIGNER" ]; then
               "$APKSIGNER" verify --print-certs "$APK" || true
-            else
-              echo "apksigner not found, skip verify"
             fi
-          else
-            echo "ANDROID_HOME/build-tools missing, skip verify"
           fi
 
-      # Step 8: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         shell: bash
@@ -696,10 +495,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
-
-          if gh api \
-            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
-            >/dev/null 2>&1; then
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists, skip."
           else
             git tag "$TAG"
@@ -707,7 +503,6 @@ jobs:
             echo "Tag $TAG pushed."
           fi
 
-      # Step 9: 发布 GitHub Release 并上传 APK
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
