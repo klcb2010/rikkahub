@@ -1,4 +1,4 @@
-name: Unsigned Release
+name: Release
 on:
   schedule:
     - cron: '0 18 * * *'
@@ -337,11 +337,6 @@ jobs:
 
           echo "=== 检查上游 Gemini Schema 修复 ==="
 
-          # ------------------------------------------------------------
-          # 情况 1：
-          # 上游已经存在 sanitizeGeminiSchema
-          # 说明上游已经包含兼容处理，完全跳过 5.5。
-          # ------------------------------------------------------------
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
             echo "[OK] 上游已存在 sanitizeGeminiSchema。"
             echo "[SKIP] 不执行本地 Gemini 补丁。"
@@ -349,13 +344,6 @@ jobs:
             exit 0
           fi
 
-          # ------------------------------------------------------------
-          # 情况 2：
-          # 检查上游是否已经明确加入 items 处理。
-          #
-          # 这里不能简单 grep "items" 和 "array" 就认为修复，
-          # 必须同时出现比较明确的 Schema 处理痕迹。
-          # ------------------------------------------------------------
           if grep -Eq \
             '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' \
             "$FILE" \
@@ -370,10 +358,6 @@ jobs:
             exit 0
           fi
 
-          # ------------------------------------------------------------
-          # 情况 3：
-          # 上游仍然是旧实现，需要执行 5.5。
-          # ------------------------------------------------------------
           echo "[INFO] 上游尚未检测到 Gemini Schema 修复。"
           echo "[INFO] 需要执行 Step 5.5。"
 
@@ -393,9 +377,6 @@ jobs:
           echo "=== Step 5.5: 修复 Gemini MCP Schema ==="
           echo "[INFO] 目标文件: $FILE"
 
-          # ------------------------------------------------------------
-          # 再次确认 5.4 找到的文件仍然存在
-          # ------------------------------------------------------------
           if [ -z "$FILE" ]; then
             echo "[ERROR] Step 5.4 没有传递 GoogleProvider.kt 路径。"
             exit 1
@@ -407,11 +388,6 @@ jobs:
             exit 1
           fi
 
-          # ------------------------------------------------------------
-          # 双重保护：
-          # 如果上游在 5.4 之后已经存在 sanitizer，
-          # 不再重复注入。
-          # ------------------------------------------------------------
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
             echo "[OK] Gemini sanitizer 已存在。"
             echo "[SKIP] 不重复修改。"
@@ -439,18 +415,10 @@ jobs:
 
           print(f"[INFO] Patching file: {path}")
 
-          # ============================================================
-          # 防止重复注入
-          # ============================================================
           if "sanitizeGeminiSchema" in text:
               print("[OK] sanitizeGeminiSchema already exists.")
               raise SystemExit(0)
 
-          # ============================================================
-          # 定位原始 parameters 代码
-          #
-          # 不依赖具体缩进，只匹配代码结构。
-          # ============================================================
           pattern = re.compile(
               r'''
               put\s*\(
@@ -486,9 +454,6 @@ jobs:
 
           print("[OK] Gemini parameters block found.")
 
-          # ============================================================
-          # 替换 parameters 生成逻辑
-          # ============================================================
           replacement = '''put(
              key = "parameters",
              element = sanitizeGeminiSchema(
@@ -510,26 +475,6 @@ jobs:
 
           print("[OK] Gemini parameters generation patched.")
 
-          # ============================================================
-          # 注入递归 Schema 修复函数
-          #
-          # 只修改：
-          #
-          # {
-          #   "type": "array"
-          # }
-          #
-          # 为：
-          #
-          # {
-          #   "type": "array",
-          #   "items": {
-          #       "type": "string"
-          #   }
-          # }
-          #
-          # 已经存在 items 的 array 完全不修改。
-          # ============================================================
           sanitizer = '''
           private fun sanitizeGeminiSchema(
              element: kotlinx.serialization.json.JsonElement
@@ -574,9 +519,6 @@ jobs:
                }
           '''
 
-          # ============================================================
-          # 找到 Kotlin 文件最后一个 }
-          # ============================================================
           last_brace = text.rfind("}")
 
           if last_brace == -1:
@@ -588,9 +530,6 @@ jobs:
               + text[last_brace:]
           )
 
-          # ============================================================
-          # 写回文件
-          # ============================================================
           path.write_text(text, encoding="utf-8")
 
           print("[OK] Gemini sanitizer injected successfully.")
@@ -611,7 +550,6 @@ jobs:
           echo "[OK] Gemini Schema compatibility patch verified."
           echo "=== Step 5.5 完成 ==="
 
-      # 谷歌兼容性检查结束
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -639,14 +577,12 @@ jobs:
           TAG_EXISTS=false
           RELEASE_EXISTS=false
 
-          # 查询远程 Tag
           if gh api \
             "repos/${{ github.repository }}/git/ref/tags/$TAG" \
             >/dev/null 2>&1; then
             TAG_EXISTS=true
           fi
 
-          # 查询 Release
           if gh api \
             "repos/${{ github.repository }}/releases/tags/$TAG" \
             >/dev/null 2>&1; then
@@ -664,12 +600,93 @@ jobs:
             echo "New release required."
           fi
 
-      # Step 7: 编译未签名 Release APK
+      # ========== 签名：解码 keystore + 注入 signingConfigs ==========
+      - name: Decode keystore
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > app/rikkahub-release.jks
+          ls -la app/rikkahub-release.jks
+
+      - name: Inject signing config
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          python3 << 'PYEOF'
+          from pathlib import Path
+          import os
+          import re
+
+          path = Path("app/build.gradle.kts")
+          text = path.read_text(encoding="utf-8")
+
+          # 去掉可能残留的 signingConfigs
+          text = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', text)
+
+          store_pass = os.environ["KEYSTORE_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
+          key_alias = os.environ["KEY_ALIAS"].replace("\\", "\\\\").replace("\"", "\\\"")
+          key_pass = os.environ["KEY_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
+
+          signing_block = f'''
+          signingConfigs {{
+          create("release") {{
+            storeFile = file("rikkahub-release.jks")
+            storePassword = "{store_pass}"
+            keyAlias = "{key_alias}"
+            keyPassword = "{key_pass}"
+          }}
+          }}
+          '''
+
+          if "android {" in text:
+              text = text.replace("android {", "android {" + signing_block, 1)
+          else:
+              raise SystemExit("android { not found in app/build.gradle.kts")
+
+          if 'signingConfig = signingConfigs.getByName("release")' not in text:
+              text = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n            signingConfig = signingConfigs.getByName("release")',
+                  text,
+                  count=1,
+              )
+
+          path.write_text(text, encoding="utf-8")
+          print("[OK] signingConfigs injected")
+          PYEOF
+
+      - name: Verify signing config present
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        run: |
+          grep -n "signingConfigs\|signingConfig\|rikkahub-release.jks" app/build.gradle.kts || true
+
+      # Step 7: 编译已签名 Release APK
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
+
+      - name: Verify APK is signed
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        run: |
+          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          echo "APK: $APK"
+          ls -la app/build/outputs/apk/release/
+          if [ -d "$ANDROID_HOME/build-tools" ]; then
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify --print-certs "$APK" || true
+            else
+              echo "apksigner not found, skip verify"
+            fi
+          else
+            echo "ANDROID_HOME/build-tools missing, skip verify"
+          fi
 
       # Step 8: 自动创建 Git Tag 并推送
       - name: Create and Push Tag
@@ -700,6 +717,6 @@ jobs:
           draft: false
           prerelease: false
           body: |
-            同步构建 `${{ steps.version.outputs.version_name }}`
+            同步构建 `${{ steps.version.outputs.version_name }}`（已签名）
           files: |
             app/build/outputs/apk/release/*.apk
