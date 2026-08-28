@@ -125,7 +125,6 @@ jobs:
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
         run: |
-          echo "=== Disabling BaselineProfile Module ==="
           sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
           sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
@@ -135,7 +134,6 @@ jobs:
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
-          echo "=== 1. Modifying app/build.gradle.kts with Python ==="
           python3 << 'PYEOF'
           import re
           gradle_path = "app/build.gradle.kts"
@@ -166,9 +164,8 @@ jobs:
           content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(content)
-          print("[OK] app/build.gradle.kts modified successfully.")
+          print("[OK] app/build.gradle.kts modified")
           PYEOF
-          echo "=== 2. Clean Firebase Residues ==="
           find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} + || true
           find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
@@ -178,62 +175,39 @@ jobs:
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
           sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
           sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
-          echo "=== 3. Copy Builtin Skills & Installer ==="
           mkdir -p app/src/main/assets/skills
           if [ -d "mod/skills" ]; then
             cp -rf mod/skills/* app/src/main/assets/skills/
-            echo "[OK] skills copied"
-          else
-            echo "[WARN] mod/skills missing"
           fi
           if [ -f "mod/BundledSkillInstaller.java" ]; then
             mkdir -p app/src/main/java/me/rerere/rikkahub
             cp -f mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
-            echo "[OK] BundledSkillInstaller copied"
-          else
-            echo "[WARN] BundledSkillInstaller missing"
           fi
           if [ -f "mod/UpdateChecker.kt" ]; then
             TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
             mkdir -p "$(dirname "$TARGET")"
             cp -f mod/UpdateChecker.kt "$TARGET"
-            echo "[OK] UpdateChecker.kt replaced"
-            grep -n "api.github.com/repos/klcb2010" "$TARGET" || echo "[WARN] API URL 可能不对"
-          else
-            echo "[WARN] mod/UpdateChecker.kt missing"
           fi
           python3 << 'PYEOF'
           from pathlib import Path
           import re
           path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
-          if not path.exists():
-              print("[WARN] RikkaHubApp.kt missing")
-              exit(0)
-          text = path.read_text(encoding="utf-8")
-          call = " BundledSkillInstaller.install(this)"
-          if call in text:
-              print("[OK] installer already exists")
-          else:
-              pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
-              if re.search(pattern, text):
-                  text = re.sub(pattern, r'\1\n\n' + call, text, count=1)
-                  path.write_text(text, encoding="utf-8")
-                  print("[OK] installer injected")
-              else:
-                  print("[WARN] onCreate marker not found")
-          PYEOF
-          python3 << 'PYEOF'
-          from pathlib import Path
-          import re
-          for path in Path("app/src/main/java").rglob("*.kt"):
+          if path.exists():
               text = path.read_text(encoding="utf-8")
+              call = " BundledSkillInstaller.install(this)"
+              if call not in text:
+                  pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
+                  if re.search(pattern, text):
+                      text = re.sub(pattern, r'\1\n\n' + call, text, count=1)
+                      path.write_text(text, encoding="utf-8")
+          for p in Path("app/src/main/java").rglob("*.kt"):
+              text = p.read_text(encoding="utf-8")
               if "DEFAULT_ASSISTANTS_IDS" in text:
                   text = re.sub(r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS', 'true', text)
-                  path.write_text(text, encoding="utf-8")
-                  print("[PATCHED]", path)
-          pref_path = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
-          if pref_path.exists():
-              text = pref_path.read_text(encoding="utf-8")
+                  p.write_text(text, encoding="utf-8")
+          pref = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
+          if pref.exists():
+              text = pref.read_text(encoding="utf-8")
               pattern = r'internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?\n\)'
               replacement = """internal val DEFAULT_ASSISTANTS = listOf(
               Assistant(
@@ -243,9 +217,7 @@ jobs:
                 )
             )"""
               if re.search(pattern, text):
-                  text = re.sub(pattern, replacement, text)
-                  pref_path.write_text(text, encoding="utf-8")
-                  print("[PATCHED] DEFAULT_ASSISTANTS")
+                  pref.write_text(re.sub(pattern, replacement, text), encoding="utf-8")
           PYEOF
           touch app/proguard-rules.pro
           if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
@@ -288,13 +260,8 @@ jobs:
         run: |
           set -euo pipefail
           FILE="$GEMINI_PROVIDER_FILE"
-          if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-            echo "[ERROR] GoogleProvider.kt missing"
-            exit 1
-          fi
-          if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            exit 0
-          fi
+          [ -n "$FILE" ] && [ -f "$FILE" ] || exit 1
+          grep -q "sanitizeGeminiSchema" "$FILE" && exit 0
           python3 <<'PYEOF'
           from pathlib import Path
           import os, re
@@ -367,10 +334,9 @@ jobs:
           '''
           last_brace = text.rfind("}")
           if last_brace == -1:
-              raise SystemExit("[ERROR] Cannot find class closing brace.")
-          text = text[:last_brace] + sanitizer + text[last_brace:]
-          path.write_text(text, encoding="utf-8")
-          print("[OK] Gemini sanitizer injected")
+              raise SystemExit("[ERROR] no closing brace")
+          path.write_text(text[:last_brace] + sanitizer + text[last_brace:], encoding="utf-8")
+          print("[OK] Gemini patch done")
           PYEOF
 
       - name: Verify Installer Before Build
@@ -378,8 +344,7 @@ jobs:
         run: |
           grep -R "class BundledSkillInstaller" app/src/main/java || true
           grep -R "BundledSkillInstaller.install" app/src/main/java || true
-          grep -n "BundledSkillInstaller" app/proguard-rules.pro || true
-          grep -n "api.github.com/repos/klcb2010" app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt || echo "[WARN] UpdateChecker 未替换成功"
+          grep -n "api.github.com/repos/klcb2010" app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt || echo "[WARN] UpdateChecker"
 
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
@@ -391,36 +356,30 @@ jobs:
           TAG="${{ steps.version.outputs.tag_name }}"
           TAG_EXISTS=false
           RELEASE_EXISTS=false
-          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
-            TAG_EXISTS=true
-          fi
-          if gh api "repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then
-            RELEASE_EXISTS=true
-          fi
-          echo "Tag exists: $TAG_EXISTS"
-          echo "Release exists: $RELEASE_EXISTS"
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then TAG_EXISTS=true; fi
+          if gh api "repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then RELEASE_EXISTS=true; fi
           if [ "$TAG_EXISTS" = "true" ] && [ "$RELEASE_EXISTS" = "true" ]; then
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_release=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Decode keystore
+      # ========== 从 mod 复制 keystore（不再用 Base64）==========
+      - name: Copy keystore from mod
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           set -e
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ERROR: KEYSTORE_BASE64 secret is empty"
+          if [ ! -f "mod/rikkahub-release.jks" ]; then
+            echo "ERROR: mod/rikkahub-release.jks not found"
+            ls -la mod/ || true
             exit 1
           fi
-          echo "$KEYSTORE_BASE64" | tr -d ' \n\r\t' | base64 -d > app/rikkahub-release.jks
+          cp -f mod/rikkahub-release.jks app/rikkahub-release.jks
           ls -la app/rikkahub-release.jks
           SIZE=$(stat -c%s app/rikkahub-release.jks)
           echo "keystore size: $SIZE bytes"
           if [ "$SIZE" -lt 100 ]; then
-            echo "ERROR: keystore too small, base64 likely wrong"
+            echo "ERROR: keystore file too small"
             exit 1
           fi
 
@@ -447,7 +406,7 @@ jobs:
             storePassword = "{store_pass}"
             keyAlias = "{key_alias}"
             keyPassword = "{key_pass}"
-           }}
+          }}
           }}
           '''
           if "android {" not in text:
@@ -483,9 +442,7 @@ jobs:
           ls -la app/build/outputs/apk/release/
           if [ -d "$ANDROID_HOME/build-tools" ]; then
             APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-            if [ -n "$APKSIGNER" ]; then
-              "$APKSIGNER" verify --print-certs "$APK" || true
-            fi
+            [ -n "$APKSIGNER" ] && "$APKSIGNER" verify --print-certs "$APK" || true
           fi
 
       - name: Create and Push Tag
@@ -500,7 +457,6 @@ jobs:
           else
             git tag "$TAG"
             git push origin "$TAG"
-            echo "Tag $TAG pushed."
           fi
 
       - name: Publish GitHub Release
