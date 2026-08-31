@@ -15,28 +15,40 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import me.rerere.common.http.await
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.Locale
+import java.util.concurrent.TimeUnit
 
-/**
- * 直接拉取 GitHub Releases API 的最近发布，替代原作者的 updates.rikka-ai.com
- */
-private const val API_URL = "https://api.github.com/repos/klcb2010/rikkahub/releases/latest"
+private const val REPO = "klcb2010/rikkahub"
+
+private val LATEST_PAGE_URLS = listOf(
+    "https://github.com/$REPO/releases/latest",
+    "https://ghfast.top/https://github.com/$REPO/releases/latest",
+    "https://gh-proxy.com/https://github.com/$REPO/releases/latest",
+)
+
+private val APK_NAMES = listOf(
+    "app-arm64-v8a-release.apk",
+    "app-universal-release.apk",
+    "app-x86_64-release.apk",
+)
 
 class UpdateChecker(
-    private val client: OkHttpClient,
+    client: OkHttpClient,
     appScope: AppScope,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val http: OkHttpClient = client.newBuilder().apply {
+        interceptors().removeAll { it.javaClass.simpleName.contains("AIRequest") }
+        followRedirects(false)
+        followSslRedirects(false)
+        connectTimeout(15, TimeUnit.SECONDS)
+        readTimeout(20, TimeUnit.SECONDS)
+        writeTimeout(20, TimeUnit.SECONDS)
+        callTimeout(25, TimeUnit.SECONDS)
+    }.build()
 
     val updateState: StateFlow<UiState<UpdateInfo>> = checkUpdate().stateIn(
         scope = appScope,
@@ -46,78 +58,63 @@ class UpdateChecker(
 
     private fun checkUpdate(): Flow<UiState<UpdateInfo>> = flow {
         emit(UiState.Loading)
-        emit(
-            UiState.Success(
-                data = try {
-                    val response = client.newCall(
-                        Request.Builder()
-                            .url(API_URL)
-                            .get()
-                            .addHeader("Accept", "application/vnd.github+json")
-                            .addHeader(
-                                "User-Agent",
-                                "RikkaHub ${BuildConfig.VERSION_NAME} #${BuildConfig.VERSION_CODE}"
-                            )
-                            .build()
-                    ).await()
-                    if (response.isSuccessful) {
-                        parseGithubRelease(response.body.string())
-                    } else {
-                        throw Exception("Failed to fetch update info (HTTP ${response.code})")
-                    }
-                } catch (e: Exception) {
-                    throw Exception("Failed to fetch update info", e)
-                }
-            )
-        )
+        emit(UiState.Success(data = fetchLatest()))
     }.catch {
         emit(UiState.Error(it))
     }.flowOn(Dispatchers.IO)
 
-    private fun parseGithubRelease(body: String): UpdateInfo {
-        val root = json.parseToJsonElement(body).jsonObject
-        val allAssets = root["assets"]?.jsonArray ?: emptyList()
-        return UpdateInfo(
-            version = root["tag_name"]?.jsonPrimitive?.contentOrNull
-                ?.trim()
-                ?.removePrefix("v")
-                ?.removePrefix("V")
-                ?: "0.0.0",
-            publishedAt = root["published_at"]?.jsonPrimitive?.contentOrNull ?: "",
-            changelog = root["body"]?.jsonPrimitive?.contentOrNull ?: "",
-            downloads = filterByAbi(allAssets).mapNotNull { asset ->
-                val obj = asset.jsonObject
-                val url = obj["browser_download_url"]?.jsonPrimitive?.contentOrNull
-                    ?: return@mapNotNull null
-                val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: url.substringAfterLast('/')
-                UpdateDownload(
-                    name = name,
-                    size = formatSize((obj["size"]?.jsonPrimitive?.contentOrNull ?: "0").toLongOrNull() ?: 0L),
-                    url = url
+    private suspend fun fetchLatest(): UpdateInfo {
+        val errors = mutableListOf<String>()
+        for (url in LATEST_PAGE_URLS) {
+            try {
+                val response = http.newCall(
+                    Request.Builder()
+                        .url(url)
+                        .get()
+                        .addHeader(
+                            "User-Agent",
+                            "RikkaHub ${BuildConfig.VERSION_NAME} #${BuildConfig.VERSION_CODE}"
+                        )
+                        .build()
+                ).await()
+                val location = response.header("Location").orEmpty()
+                val tag = extractTag(location) ?: extractTag(response.body?.string().orEmpty())
+                if (tag.isNullOrBlank()) {
+                    errors += "${response.code} no-tag ${url.substringAfter("://").substringBefore("?")}"
+                    continue
+                }
+                val version = tag.trim().removePrefix("v").removePrefix("V")
+                val downloads = filterByAbi(
+                    APK_NAMES.map { name ->
+                        UpdateDownload(
+                            name = name,
+                            url = "https://github.com/$REPO/releases/download/$tag/$name",
+                            size = "",
+                        )
+                    }
                 )
+                return UpdateInfo(
+                    version = version,
+                    publishedAt = "",
+                    changelog = "RikkaHub $version",
+                    downloads = downloads,
+                )
+            } catch (e: Exception) {
+                errors += "${e.javaClass.simpleName}:${e.message}"
             }
-        )
+        }
+        throw Exception("Failed to fetch update info: ${errors.joinToString(" | ")}")
     }
 
-    private fun filterByAbi(assets: List<kotlinx.serialization.json.JsonElement>): List<kotlinx.serialization.json.JsonElement> {
-        val supportedAbis = Build.SUPPORTED_ABIS.toSet()
-        val matched = assets.filter { asset ->
-            val name = asset.jsonObject["name"]?.jsonPrimitive?.contentOrNull ?: return@filter false
-            supportedAbis.any { name.contains(it) }
-        }
-        return if (matched.isNotEmpty()) matched else assets
+    private fun extractTag(text: String): String? {
+        val regex = Regex("""/releases/tag/(v?[\w.\-]+)""")
+        return regex.find(text)?.groupValues?.get(1)
     }
 
-    private fun formatSize(bytes: Long): String {
-        if (bytes <= 0) return "未知大小"
-        val units = arrayOf("B", "KB", "MB", "GB")
-        var value = bytes.toDouble()
-        var unit = 0
-        while (value >= 1024 && unit < units.size - 1) {
-            value /= 1024
-            unit++
-        }
-        return String.format(Locale.US, "%.1f %s", value, units[unit])
+    private fun filterByAbi(downloads: List<UpdateDownload>): List<UpdateDownload> {
+        val abis = Build.SUPPORTED_ABIS.toSet()
+        val matched = downloads.filter { d -> abis.any { abi -> d.name.contains(abi) } }
+        return if (matched.isNotEmpty()) matched else downloads
     }
 
     fun downloadUpdate(context: Context, download: UpdateDownload) {
@@ -173,14 +170,12 @@ value class Version(val value: String) : Comparable<Version> {
     override fun compareTo(other: Version): Int {
         val a = this.parse()
         val b = other.parse()
-
         val maxLen = maxOf(a.core.size, b.core.size)
         for (i in 0 until maxLen) {
             val ap = if (i < a.core.size) a.core[i] else 0
             val bp = if (i < b.core.size) b.core[i] else 0
             if (ap != bp) return ap.compareTo(bp)
         }
-
         return when {
             a.prerelease == null && b.prerelease == null -> 0
             a.prerelease != null && b.prerelease == null -> -1
@@ -199,10 +194,8 @@ value class Version(val value: String) : Comparable<Version> {
             for (i in 0 until maxLen) {
                 if (i >= a.size) return -1
                 if (i >= b.size) return 1
-
                 val aNum = a[i].toIntOrNull()
                 val bNum = b[i].toIntOrNull()
-
                 val cmp = when {
                     aNum != null && bNum != null -> aNum.compareTo(bNum)
                     aNum != null -> -1
