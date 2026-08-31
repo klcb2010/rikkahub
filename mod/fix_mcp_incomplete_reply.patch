@@ -1,0 +1,38 @@
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
+@@ -430,14 +430,26 @@ class GenerationHandler(
+             if (stream) {
+                 // 每次重试都从本次模型调用开始前的消息快照重新合并，避免将重试响应
+                 // 追加到已经展示的半截回复后面。预先创建助手消息可让所有尝试复用同一 ID，
+                 // ChatService 因而会覆盖当前分支，而不是创建新的候选消息。
+-                val responseBaseMessages =
+-                    if (messages.lastOrNull()?.role == MessageRole.ASSISTANT) {
+-                        messages
+-                    } else {
+-                        messages + UIMessage(
+-                            role = MessageRole.ASSISTANT,
+-                            parts = emptyList(),
+-                            modelId = model.id,
+-                        )
+-                    }
++                //
++                // 例外：上一轮 assistant 已包含 Tool/ServerTool（MCP 多轮）时，
++                // 必须新建一条 assistant 消息承载最终文本，不能继续 append 到
++                // 带 tool_call 的旧消息上，否则会出现最终回答被覆盖/截断/不完整。
++                val lastMessage = messages.lastOrNull()
++                val lastHasToolParts = lastMessage?.parts?.any { part ->
++                    part is UIMessagePart.Tool || part is UIMessagePart.ServerTool
++                } == true
++                val responseBaseMessages = when {
++                    lastMessage?.role == MessageRole.ASSISTANT && !lastHasToolParts -> {
++                        messages
++                    }
++                    else -> {
++                        messages + UIMessage(
++                            role = MessageRole.ASSISTANT,
++                            parts = emptyList(),
++                            modelId = model.id,
++                        )
++                    }
++                }
+                 var retryCount = 0
