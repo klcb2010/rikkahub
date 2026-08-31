@@ -338,7 +338,26 @@ jobs:
           path.write_text(text[:last_brace] + sanitizer + text[last_brace:], encoding="utf-8")
           print("[OK] Gemini patch done")
           PYEOF
-
+      - name: Apply MCP incomplete-reply patches
+        if: steps.check_build.outputs.should_build == 'true'
+        run: |
+          set -e
+          apply_one() {
+            local p="$1"
+            [ -f "$p" ] || return 0
+            if git apply --check "$p" 2>/dev/null; then
+              git apply "$p"
+              echo "[OK] applied $p"
+            elif git apply --reverse --check "$p" 2>/dev/null; then
+              echo "[SKIP] already applied $p"
+            else
+              echo "[FAIL] cannot apply $p — upstream changed, fix the patch"
+              git apply --check "$p" || true
+              exit 1
+            fi
+          }
+          apply_one mod/fix_mcp_incomplete_reply.patch
+          apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
