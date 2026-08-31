@@ -1,0 +1,31 @@
+--- a/ai/src/main/java/me/rerere/ai/ui/StreamChunkHandler.kt
++++ b/ai/src/main/java/me/rerere/ai/ui/StreamChunkHandler.kt
+@@ -323,15 +323,29 @@ fun List<UIMessage>.handleTextGenerationResult(
+     result: TextGenerationResult,
+     model: Model? = null,
+ ): List<UIMessage> {
+     require(isNotEmpty()) { "messages must not be empty" }
+     val incoming = result.message.copy(
+         modelId = model?.id,
+         usage = result.usage,
+         finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()),
+     ).finishReasoning()
+-    return if (last().role != incoming.role) {
++    // MCP/tool 多轮：若末条 assistant 已含 Tool/ServerTool，则新建消息，
++    // 避免把最终文本 merge 进 tool_call 那一轮。
++    val lastHasToolParts = last().parts.any { part ->
++        part is UIMessagePart.Tool || part is UIMessagePart.ServerTool
++    }
++    return if (
++        last().role != incoming.role ||
++        (last().role == MessageRole.ASSISTANT && lastHasToolParts && incoming.role == MessageRole.ASSISTANT)
++    ) {
+         this + incoming
+     } else {
+         dropLast(1) + last().appendMessage(incoming).copy(
+             modelId = model?.id ?: last().modelId,
+             usage = last().usage.merge(result.usage ?: TokenUsage()),
+             finishedAt = incoming.finishedAt,
+         ).finishReasoning()
+     }
+ }
