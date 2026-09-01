@@ -1,13 +1,17 @@
 name: Signed Release
+
 on:
   schedule:
     - cron: '0 18 * * *'
   workflow_dispatch:
+
 permissions:
   contents: write
+
 jobs:
   sync-and-build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Local Repo
         uses: actions/checkout@v4
@@ -24,67 +28,119 @@ jobs:
         id: sync
         run: |
           set -e
+
           echo "=== Step 1: Backup protected files ==="
+
           mkdir -p /tmp/protected_backup
-          [ -f ".github/workflows/daily-build.yml" ] && cp --parents .github/workflows/daily-build.yml /tmp/protected_backup/ || true
-          [ -f "README.md" ] && cp --parents README.md /tmp/protected_backup/ || true
-          [ -f "build.gradle.kts" ] && cp --parents build.gradle.kts /tmp/protected_backup/ || true
-          [ -f "app/google-services.json" ] && cp --parents app/google-services.json /tmp/protected_backup/ || true
-          [ -d "mod" ] && cp -r mod /tmp/protected_backup/ || true
+
+          [ -f ".github/workflows/daily-build.yml" ] && \
+            cp --parents .github/workflows/daily-build.yml /tmp/protected_backup/ || true
+
+          [ -f "README.md" ] && \
+            cp --parents README.md /tmp/protected_backup/ || true
+
+          [ -f "build.gradle.kts" ] && \
+            cp --parents build.gradle.kts /tmp/protected_backup/ || true
+
+          [ -f "app/google-services.json" ] && \
+            cp --parents app/google-services.json /tmp/protected_backup/ || true
+
+          [ -d "mod" ] && \
+            cp -r mod /tmp/protected_backup/ || true
+
           echo "=== Fetching and merging upstream ==="
+
           git remote add upstream https://github.com/rikkahub/rikkahub.git || true
+
           git fetch upstream master || git fetch upstream main
+
           UPSTREAM_BRANCH="upstream/master"
-          git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || UPSTREAM_BRANCH="upstream/main"
+          git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || \
+            UPSTREAM_BRANCH="upstream/main"
+
           git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours
+
           echo "=== Restoring protected files ==="
-          [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && cp /tmp/protected_backup/.github/workflows/daily-build.yml .github/workflows/daily-build.yml || true
-          [ -f "/tmp/protected_backup/README.md" ] && cp /tmp/protected_backup/README.md README.md || true
-          [ -f "/tmp/protected_backup/build.gradle.kts" ] && cp /tmp/protected_backup/build.gradle.kts build.gradle.kts || true
-          [ -f "/tmp/protected_backup/app/google-services.json" ] && cp /tmp/protected_backup/app/google-services.json app/google-services.json || true
+
+          [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && \
+            cp /tmp/protected_backup/.github/workflows/daily-build.yml \
+              .github/workflows/daily-build.yml || true
+
+          [ -f "/tmp/protected_backup/README.md" ] && \
+            cp /tmp/protected_backup/README.md README.md || true
+
+          [ -f "/tmp/protected_backup/build.gradle.kts" ] && \
+            cp /tmp/protected_backup/build.gradle.kts build.gradle.kts || true
+
+          [ -f "/tmp/protected_backup/app/google-services.json" ] && \
+            cp /tmp/protected_backup/app/google-services.json \
+              app/google-services.json || true
+
           if [ -d "/tmp/protected_backup/mod" ]; then
             rm -rf mod
             cp -r /tmp/protected_backup/mod mod
           fi
+
           git add .
+
           if ! git diff --staged --quiet; then
             git commit -m "sync: merge upstream with protected local files"
+
             git push origin master || git push origin main
-            echo "has_sync_changes=true" >> $GITHUB_OUTPUT
+
+            echo "has_sync_changes=true" >> "$GITHUB_OUTPUT"
           else
             echo "No new changes from upstream merge."
-            echo "has_sync_changes=false" >> $GITHUB_OUTPUT
+            echo "has_sync_changes=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Extract Version Name & Check Tag
         id: version
         run: |
-          VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/')
+          VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | \
+            head -1 | \
+            sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/')
+
           if [ -z "$VERSION_NAME" ]; then
             echo "Cannot find versionName"
             exit 1
           fi
+
           TAG_NAME="v${VERSION_NAME}"
-          echo "version_name=${VERSION_NAME}" >> $GITHUB_OUTPUT
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          if git rev-parse "$TAG_NAME" >/dev/null 2>&1 || git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}"; then
-            echo "tag_exists=true" >> $GITHUB_OUTPUT
+
+          echo "version_name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1 || \
+             git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}"; then
+
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
             echo "Tag ${TAG_NAME} already exists."
+
           else
-            echo "tag_exists=false" >> $GITHUB_OUTPUT
+
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
             echo "New Tag ${TAG_NAME} will be created."
+
           fi
 
       - name: Check Should Build
         id: check_build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+
             echo "should_build=true" >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.version.outputs.tag_exists }}" = "false" ] || [ "${{ steps.sync.outputs.has_sync_changes }}" = "true" ]; then
+
+          elif [ "${{ steps.version.outputs.tag_exists }}" = "false" ] || \
+               [ "${{ steps.sync.outputs.has_sync_changes }}" = "true" ]; then
+
             echo "should_build=true" >> "$GITHUB_OUTPUT"
+
           else
+
             echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "无新提交且版本号标签未更新，跳过构建。"
+
           fi
 
       - name: Set up JDK 17
@@ -111,7 +167,8 @@ jobs:
       - name: Install web-ui dependencies
         if: steps.check_build.outputs.should_build == 'true'
         working-directory: web-ui
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
 
       - name: Gradle cache
         if: steps.check_build.outputs.should_build == 'true'
@@ -125,109 +182,212 @@ jobs:
       - name: Remove BaselineProfile Module
         if: steps.check_build.outputs.should_build == 'true'
         run: |
-          sed -i '/include(":app:baselineprofile")/d' settings.gradle.kts || true
-          sed -i '/baselineProfile(project(":app:baselineprofile"))/d' app/build.gradle.kts || true
-          sed -i '/alias(libs\.plugins\.baselineprofile)/d' app/build.gradle.kts || true
-          sed -i '/alias(libs\.plugins\.baselineprofile)/d' build.gradle.kts || true
-          sed -i '/alias(libs\.plugins\.android\.test)/d' build.gradle.kts || true
+          sed -i '/include(":app:baselineprofile")/d' \
+            settings.gradle.kts || true
+
+          sed -i '/baselineProfile(project(":app:baselineprofile"))/d' \
+            app/build.gradle.kts || true
+
+          sed -i '/alias(libs\.plugins\.baselineprofile)/d' \
+            app/build.gradle.kts || true
+
+          sed -i '/alias(libs\.plugins\.baselineprofile)/d' \
+            build.gradle.kts || true
+
+          sed -i '/alias(libs\.plugins\.android\.test)/d' \
+            build.gradle.kts || true
 
       - name: Modify app/build.gradle.kts & Apply Custom Mods
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           python3 << 'PYEOF'
           import re
+
           gradle_path = "app/build.gradle.kts"
+
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
-          content = re.sub(r'\s*alias\(libs\.plugins\.google\.services\)', '', content)
-          content = re.sub(r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)', '', content)
-          content = re.sub(r'\s*// AppBundle tasks usually contain "bundle" in their name', '', content)
-          content = re.sub(r'\s*//noinspection WrongGradleMethod', '', content)
-          content = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', content)
-          content = re.sub(r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)', '', content)
-          content = re.sub(r'\s*optimization\s*\{[\s\S]*?\}', '', content)
+
+          # Remove Google Services / Firebase plugins
+          content = re.sub(
+              r'\s*alias\(libs\.plugins\.google\.services\)',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*alias\(libs\.plugins\.firebase\.crashlytics\)',
+              '',
+              content
+          )
+
+          # Remove unnecessary comments
+          content = re.sub(
+              r'\s*// AppBundle tasks usually contain "bundle" in their name',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*//noinspection WrongGradleMethod',
+              '',
+              content
+          )
+
+          # Remove existing signing config.
+          content = re.sub(
+              r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*signingConfig\s*=\s*signingConfigs\.getByName\("release"\)',
+              '',
+              content
+          )
+
+          # Remove optimization block.
+          content = re.sub(
+              r'\s*optimization\s*\{[\s\S]*?\}',
+              '',
+              content
+          )
+
+          # Force minify.
           if "isMinifyEnabled" in content:
-              content = re.sub(r'isMinifyEnabled\s*=\s*(true|false)', 'isMinifyEnabled = true', content)
+              content = re.sub(
+                  r'isMinifyEnabled\s*=\s*(true|false)',
+                  'isMinifyEnabled = true',
+                  content
+              )
           else:
-              content = re.sub(r'(release\s*\{)', r'\1\n isMinifyEnabled = true', content, count=1)
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n        isMinifyEnabled = true',
+                  content,
+                  count=1
+              )
+
+          # Force resource shrinking.
           if "isShrinkResources" in content:
-              content = re.sub(r'isShrinkResources\s*=\s*(true|false)', 'isShrinkResources = true', content)
+              content = re.sub(
+                  r'isShrinkResources\s*=\s*(true|false)',
+                  'isShrinkResources = true',
+                  content
+              )
           else:
-              content = re.sub(r'(release\s*\{)', r'\1\n isShrinkResources = true', content, count=1)
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1\n        isShrinkResources = true',
+                  content,
+                  count=1
+              )
+
+          # Add ProGuard if missing.
           if "proguardFiles(" not in content:
-              proguard_block = '\n proguardFiles(\n getDefaultProguardFile("proguard-android-optimize.txt"),\n "proguard-rules.pro"\n )'
-              content = re.sub(r'(release\s*\{)', r'\1' + proguard_block, content, count=1)
-          content = re.sub(r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}', '', content)
-          content = re.sub(r'\s*// Firebase', '', content)
-          content = re.sub(r'\s*implementation\(platform\(libs\.firebase\.bom\)\)', '', content)
-          content = re.sub(r'\s*implementation\(libs\.firebase\.crashlytics\)', '', content)
-          content = re.sub(r'\s*implementation\(libs\.firebase\.analytics\)', '', content)
+              proguard_block = '''
+                  proguardFiles(
+                      getDefaultProguardFile("proguard-android-optimize.txt"),
+                      "proguard-rules.pro"
+                  )
+              '''
+
+              content = re.sub(
+                  r'(release\s*\{)',
+                  r'\1' + proguard_block,
+                  content,
+                  count=1
+              )
+
+          # Remove sourceSets override.
+          content = re.sub(
+              r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}',
+              '',
+              content
+          )
+
+          # Remove Firebase.
+          content = re.sub(
+              r'\s*// Firebase',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*implementation\(platform\(libs\.firebase\.bom\)\)',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*implementation\(libs\.firebase\.crashlytics\)',
+              '',
+              content
+          )
+
+          content = re.sub(
+              r'\s*implementation\(libs\.firebase\.analytics\)',
+              '',
+              content
+          )
+
           with open(gradle_path, "w", encoding="utf-8") as f:
               f.write(content)
+
           print("[OK] app/build.gradle.kts modified")
           PYEOF
-          find app/src/main/java -name "*.kt" -exec sed -i '/import com\.google\.firebase/d' {} + || true
-          find app/src/main/java -name "*.kt" -exec sed -i '/FirebaseAnalytics/d' {} + || true
-          find app/src/main/java -name "*.kt" -exec sed -i '/Firebase/d' {} + || true
-          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
-          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
-          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
-          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
-          sed -i '/Firebase/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
-          sed -i '/analytics/d' app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
-          mkdir -p app/src/main/assets/skills
-          if [ -d "mod/skills" ]; then
-            cp -rf mod/skills/* app/src/main/assets/skills/
-          fi
-          if [ -f "mod/BundledSkillInstaller.java" ]; then
-            mkdir -p app/src/main/java/me/rerere/rikkahub
-            cp -f mod/BundledSkillInstaller.java app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
-          fi
+
+          # Remove Firebase imports/usages from Kotlin source.
+          find app/src/main/java -name "*.kt" \
+            -exec sed -i '/import com\.google\.firebase/d' {} + || true
+
+          find app/src/main/java -name "*.kt" \
+            -exec sed -i '/FirebaseAnalytics/d' {} + || true
+
+          find app/src/main/java -name "*.kt" \
+            -exec sed -i '/Firebase/d' {} + || true
+
+          sed -i '/Firebase/d' \
+            app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+
+          sed -i '/analytics/d' \
+            app/src/main/java/me/rerere/rikkahub/di/AppModule.kt || true
+
+          sed -i '/Firebase/d' \
+            app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+
+          sed -i '/analytics/d' \
+            app/src/main/java/me/rerere/rikkahub/di/ViewModelModule.kt || true
+
+          sed -i '/Firebase/d' \
+            app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
+
+          sed -i '/analytics/d' \
+            app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
+
+          # Keep UpdateChecker mod.
           if [ -f "mod/UpdateChecker.kt" ]; then
             TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
+
             mkdir -p "$(dirname "$TARGET")"
+
             cp -f mod/UpdateChecker.kt "$TARGET"
+
+            echo "[OK] UpdateChecker installed"
           fi
-          python3 << 'PYEOF'
-          from pathlib import Path
-          import re
-          path = Path("app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt")
-          if path.exists():
-              text = path.read_text(encoding="utf-8")
-              call = " BundledSkillInstaller.install(this)"
-              if call not in text:
-                  pattern = r'(override fun onCreate\(\)\s*\{\s*super\.onCreate\(\))'
-                  if re.search(pattern, text):
-                      text = re.sub(pattern, r'\1\n\n' + call, text, count=1)
-                      path.write_text(text, encoding="utf-8")
-          for p in Path("app/src/main/java").rglob("*.kt"):
-              text = p.read_text(encoding="utf-8")
-              if "DEFAULT_ASSISTANTS_IDS" in text:
-                  text = re.sub(r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS', 'true', text)
-                  p.write_text(text, encoding="utf-8")
-          pref = Path("app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt")
-          if pref.exists():
-              text = pref.read_text(encoding="utf-8")
-              pattern = r'internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?\n\)'
-              replacement = """internal val DEFAULT_ASSISTANTS = listOf(
-              Assistant(
-          id = DEFAULT_ASSISTANT_ID,
-          name = "",
-          systemPrompt = ""
-                )
-            )"""
-              if re.search(pattern, text):
-                  pref.write_text(re.sub(pattern, replacement, text), encoding="utf-8")
-          PYEOF
+
+          # IMPORTANT:
+          # Skill injection has intentionally been removed.
+          #
+          # No mod/skills copying.
+          # No BundledSkillInstaller.java copying.
+          # No BundledSkillInstaller.install().
+          # No DEFAULT_ASSISTANTS_IDS modification.
+          # No DEFAULT_ASSISTANTS replacement.
+          # No Skill-specific ProGuard rules.
+
           touch app/proguard-rules.pro
-          if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
-            cat >> app/proguard-rules.pro << 'RULESEOF'
-          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
-          -keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
-          -keep class me.rerere.rikkahub.RikkaHubApp { *; }
-          -keep class me.rerere.rikkahub.data.ai.tools.** { *; }
-          RULESEOF
-          fi
 
       - name: Check Gemini schema upstream fix
         if: steps.check_build.outputs.should_build == 'true'
@@ -235,21 +395,37 @@ jobs:
         shell: bash
         run: |
           set -e
-          FILE=$(find . -type f -name "GoogleProvider.kt" -not -path "./.git/*" | head -n 1)
+
+          FILE=$(find . \
+            -type f \
+            -name "GoogleProvider.kt" \
+            -not -path "./.git/*" \
+            | head -n 1)
+
           if [ -z "$FILE" ]; then
             echo "[ERROR] GoogleProvider.kt not found."
             exit 1
           fi
+
           echo "google_provider_file=$FILE" >> "$GITHUB_OUTPUT"
+
           if grep -q "sanitizeGeminiSchema" "$FILE"; then
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if grep -Eq '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' "$FILE" \
-            && grep -Eq '"array"|type.*array|array.*type|contentOrNull.*array' "$FILE"; then
+
+          if grep -Eq \
+            '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' \
+            "$FILE" \
+            && \
+            grep -Eq \
+            '"array"|type.*array|array.*type|contentOrNull.*array' \
+            "$FILE"; then
+
             echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
           echo "need_gemini_patch=true" >> "$GITHUB_OUTPUT"
 
       - name: Patch Gemini MCP schema compatibility
@@ -259,111 +435,161 @@ jobs:
           GEMINI_PROVIDER_FILE: ${{ steps.gemini_check.outputs.google_provider_file }}
         run: |
           set -euo pipefail
+
           FILE="$GEMINI_PROVIDER_FILE"
+
           [ -n "$FILE" ] && [ -f "$FILE" ] || exit 1
+
           grep -q "sanitizeGeminiSchema" "$FILE" && exit 0
-          python3 <<'PYEOF'
+
+          python3 << 'PYEOF'
           from pathlib import Path
-          import os, re
+          import os
+          import re
+
           path = Path(os.environ["GEMINI_PROVIDER_FILE"])
           text = path.read_text(encoding="utf-8")
+
           if "sanitizeGeminiSchema" in text:
               raise SystemExit(0)
+
           pattern = re.compile(
               r'''
               put\s*\(
-             \s*key\s*=\s*"parameters"\s*,\s*
-             element\s*=\s*
-             json\.encodeToJsonElement\s*\(
-                 \s*tool\.parameters\(\)\s*
-             \)
-             \s*
-             \.removeElements\s*\(
-                 \s*listOf\s*\(
-                     \s*"const"\s*,\s*
-                     \s*"exclusiveMaximum"\s*,\s*
-                     \s*"exclusiveMinimum"\s*,\s*
-                     \s*"format"\s*,\s*
-                     \s*"additionalProperties"\s*,\s*
-                     \s*"enum"\s*,?
-                 \s*\)
-             \s*\)
+                  \s*key\s*=\s*"parameters"\s*,\s*
+                  element\s*=\s*
+                  json\.encodeToJsonElement\s*\(
+                      \s*tool\.parameters\(\)\s*
+                  \)
+                  \s*
+                  \.removeElements\s*\(
+                      \s*listOf\s*\(
+                          \s*"const"\s*,\s*
+                          \s*"exclusiveMaximum"\s*,\s*
+                          \s*"exclusiveMinimum"\s*,\s*
+                          \s*"format"\s*,\s*
+                          \s*"additionalProperties"\s*,\s*
+                          \s*"enum"\s*,?
+                      \s*\)
+                  \s*\)
               \s*\)
               ''',
               re.VERBOSE | re.DOTALL,
           )
+
           match = pattern.search(text)
+
           if not match:
-              raise SystemExit("[ERROR] Gemini parameters block not found.")
+              raise SystemExit(
+                  "[ERROR] Gemini parameters block not found."
+              )
+
           replacement = '''put(
-             key = "parameters",
-             element = sanitizeGeminiSchema(
-            json.encodeToJsonElement(tool.parameters())
-                .removeElements(
-                    listOf(
-                        "const",
-                        "exclusiveMaximum",
-                        "exclusiveMinimum",
-                        "format",
-                        "additionalProperties",
-                        "enum",
-                     )
-                 )
+              key = "parameters",
+              element = sanitizeGeminiSchema(
+                  json.encodeToJsonElement(tool.parameters())
+                      .removeElements(
+                          listOf(
+                              "const",
+                              "exclusiveMaximum",
+                              "exclusiveMinimum",
+                              "format",
+                              "additionalProperties",
+                              "enum",
+                          )
+                      )
               )
           )'''
-          text = text[:match.start()] + replacement + text[match.end():]
+
+          text = (
+              text[:match.start()]
+              + replacement
+              + text[match.end():]
+          )
+
           sanitizer = '''
           private fun sanitizeGeminiSchema(
-             element: kotlinx.serialization.json.JsonElement
+              element: kotlinx.serialization.json.JsonElement
           ): kotlinx.serialization.json.JsonElement {
               return when (element) {
-             is JsonObject -> {
-            val map = element.toMutableMap()
-            val type = (map["type"] as? JsonPrimitive)?.contentOrNull
-            if (type == "array" && !map.containsKey("items")) {
-                map["items"] = buildJsonObject { put("type", "string") }
-            }
-            JsonObject(map.mapValues { (_, value) -> sanitizeGeminiSchema(value) })
+                  is JsonObject -> {
+                      val map = element.toMutableMap()
+                      val type =
+                          (map["type"] as? JsonPrimitive)?.contentOrNull
+
+                      if (type == "array" && !map.containsKey("items")) {
+                          map["items"] =
+                              buildJsonObject {
+                                  put("type", "string")
+                              }
+                      }
+
+                      JsonObject(
+                          map.mapValues { (_, value) ->
+                              sanitizeGeminiSchema(value)
+                          }
+                      )
                   }
-             is JsonArray -> {
-            JsonArray(element.map { child -> sanitizeGeminiSchema(child) })
+
+                  is JsonArray -> {
+                      JsonArray(
+                          element.map { child ->
+                              sanitizeGeminiSchema(child)
+                          }
+                      )
                   }
-                       else -> element
-                   }
-               }
+
+                  else -> element
+              }
+          }
           '''
+
           last_brace = text.rfind("}")
+
           if last_brace == -1:
               raise SystemExit("[ERROR] no closing brace")
-          path.write_text(text[:last_brace] + sanitizer + text[last_brace:], encoding="utf-8")
+
+          path.write_text(
+              text[:last_brace]
+              + sanitizer
+              + text[last_brace:],
+              encoding="utf-8"
+          )
+
           print("[OK] Gemini patch done")
           PYEOF
+
       - name: Apply MCP incomplete-reply patches
         if: steps.check_build.outputs.should_build == 'true'
         run: |
           set -e
+
           apply_one() {
             local p="$1"
+
             [ -f "$p" ] || return 0
+
             if git apply --check "$p" 2>/dev/null; then
+
               git apply "$p"
               echo "[OK] applied $p"
+
             elif git apply --reverse --check "$p" 2>/dev/null; then
+
               echo "[SKIP] already applied $p"
+
             else
+
               echo "[FAIL] cannot apply $p — upstream changed, fix the patch"
+
               git apply --check "$p" || true
+
               exit 1
             fi
           }
+
           apply_one mod/fix_mcp_incomplete_reply.patch
           apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
-      - name: Verify Installer Before Build
-        if: steps.check_build.outputs.should_build == 'true'
-        run: |
-          grep -R "class BundledSkillInstaller" app/src/main/java || true
-          grep -R "BundledSkillInstaller.install" app/src/main/java || true
-          grep -n "api.github.com/repos/klcb2010" app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt || echo "[WARN] UpdateChecker"
 
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
@@ -373,30 +599,54 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
+
           TAG_EXISTS=false
           RELEASE_EXISTS=false
-          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then TAG_EXISTS=true; fi
-          if gh api "repos/${{ github.repository }}/releases/tags/$TAG" >/dev/null 2>&1; then RELEASE_EXISTS=true; fi
-          if [ "$TAG_EXISTS" = "true" ] && [ "$RELEASE_EXISTS" = "true" ]; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+          if gh api \
+            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
+            >/dev/null 2>&1; then
+            TAG_EXISTS=true
           fi
 
-      # ========== 从 mod 复制 keystore（不再用 Base64）==========
+          if gh api \
+            "repos/${{ github.repository }}/releases/tags/$TAG" \
+            >/dev/null 2>&1; then
+            RELEASE_EXISTS=true
+          fi
+
+          if [ "$TAG_EXISTS" = "true" ] && \
+             [ "$RELEASE_EXISTS" = "true" ]; then
+
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+
+          else
+
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+
+          fi
+
       - name: Copy keystore from mod
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
           set -e
+
           if [ ! -f "mod/rikkahub-release.jks" ]; then
             echo "ERROR: mod/rikkahub-release.jks not found"
             ls -la mod/ || true
             exit 1
           fi
-          cp -f mod/rikkahub-release.jks app/rikkahub-release.jks
+
+          cp -f \
+            mod/rikkahub-release.jks \
+            app/rikkahub-release.jks
+
           ls -la app/rikkahub-release.jks
+
           SIZE=$(stat -c%s app/rikkahub-release.jks)
+
           echo "keystore size: $SIZE bytes"
+
           if [ "$SIZE" -lt 100 ]; then
             echo "ERROR: keystore file too small"
             exit 1
@@ -411,41 +661,76 @@ jobs:
         run: |
           python3 << 'PYEOF'
           from pathlib import Path
-          import os, re
+          import os
+          import re
+
           path = Path("app/build.gradle.kts")
           text = path.read_text(encoding="utf-8")
-          text = re.sub(r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}', '', text)
-          store_pass = os.environ["KEYSTORE_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
-          key_alias = os.environ["KEY_ALIAS"].replace("\\", "\\\\").replace("\"", "\\\"")
-          key_pass = os.environ["KEY_PASSWORD"].replace("\\", "\\\\").replace("\"", "\\\"")
+
+          # Remove any existing signing config.
+          text = re.sub(
+              r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
+              '',
+              text
+          )
+
+          store_pass = (
+              os.environ["KEYSTORE_PASSWORD"]
+              .replace("\\", "\\\\")
+              .replace('"', '\\"')
+          )
+
+          key_alias = (
+              os.environ["KEY_ALIAS"]
+              .replace("\\", "\\\\")
+              .replace('"', '\\"')
+          )
+
+          key_pass = (
+              os.environ["KEY_PASSWORD"]
+              .replace("\\", "\\\\")
+              .replace('"', '\\"')
+          )
+
           signing_block = f'''
           signingConfigs {{
-          create("release") {{
-            storeFile = file("rikkahub-release.jks")
-            storePassword = "{store_pass}"
-            keyAlias = "{key_alias}"
-            keyPassword = "{key_pass}"
-          }}
+              create("release") {{
+                  storeFile = file("rikkahub-release.jks")
+                  storePassword = "{store_pass}"
+                  keyAlias = "{key_alias}"
+                  keyPassword = "{key_pass}"
+              }}
           }}
           '''
+
           if "android {" not in text:
               raise SystemExit("android { not found")
-          text = text.replace("android {", "android {" + signing_block, 1)
+
+          text = text.replace(
+              "android {",
+              "android {" + signing_block,
+              1
+          )
+
           if 'signingConfig = signingConfigs.getByName("release")' not in text:
               text = re.sub(
                   r'(release\s*\{)',
                   r'\1\n            signingConfig = signingConfigs.getByName("release")',
                   text,
-                  count=1,
+                  count=1
               )
+
           path.write_text(text, encoding="utf-8")
+
           print("[OK] signingConfigs injected")
           PYEOF
 
       - name: Verify signing config present
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
-          grep -n "signingConfigs\|signingConfig\|rikkahub-release.jks" app/build.gradle.kts || true
+          grep -n \
+            "signingConfigs\|signingConfig\|rikkahub-release.jks" \
+            app/build.gradle.kts || true
 
       - name: Build Release APK
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
@@ -457,11 +742,22 @@ jobs:
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
           APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+
           echo "APK: $APK"
+
           ls -la app/build/outputs/apk/release/
+
           if [ -d "$ANDROID_HOME/build-tools" ]; then
-            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
-            [ -n "$APKSIGNER" ] && "$APKSIGNER" verify --print-certs "$APK" || true
+
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" \
+              -name apksigner \
+              | sort -V \
+              | tail -1)
+
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify --print-certs "$APK"
+            fi
+
           fi
 
       - name: Create and Push Tag
@@ -471,11 +767,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ steps.version.outputs.tag_name }}"
-          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+
+          if gh api \
+            "repos/${{ github.repository }}/git/ref/tags/$TAG" \
+            >/dev/null 2>&1; then
+
             echo "Tag $TAG already exists, skip."
+
           else
+
             git tag "$TAG"
             git push origin "$TAG"
+
           fi
 
       - name: Publish GitHub Release
