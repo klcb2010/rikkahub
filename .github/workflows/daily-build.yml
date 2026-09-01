@@ -65,7 +65,7 @@ jobs:
 
           [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && \
             cp /tmp/protected_backup/.github/workflows/daily-build.yml \
-              .github/workflows/daily-build.yml || true
+            .github/workflows/daily-build.yml || true
 
           [ -f "/tmp/protected_backup/README.md" ] && \
             cp /tmp/protected_backup/README.md README.md || true
@@ -75,7 +75,7 @@ jobs:
 
           [ -f "/tmp/protected_backup/app/google-services.json" ] && \
             cp /tmp/protected_backup/app/google-services.json \
-              app/google-services.json || true
+            app/google-services.json || true
 
           if [ -d "/tmp/protected_backup/mod" ]; then
             rm -rf mod
@@ -98,7 +98,11 @@ jobs:
       - name: Extract Version Name & Check Tag
         id: version
         run: |
-          VERSION_NAME=$(grep -E 'versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/')
+          VERSION_NAME=$(
+            grep -E 'versionName\s*=' app/build.gradle.kts |
+            head -1 |
+            sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/'
+          )
 
           if [ -z "$VERSION_NAME" ]; then
             echo "Cannot find versionName"
@@ -206,7 +210,7 @@ jobs:
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
 
-          # Remove Google Services / Firebase plugins
+          # 移除 Google Services / Firebase 插件
           content = re.sub(
               r'\s*alias\(libs\.plugins\.google\.services\)',
               '',
@@ -219,7 +223,6 @@ jobs:
               content
           )
 
-          # Remove unnecessary comments
           content = re.sub(
               r'\s*// AppBundle tasks usually contain "bundle" in their name',
               '',
@@ -232,8 +235,7 @@ jobs:
               content
           )
 
-          # Remove existing signing config.
-          # Release signing is injected later.
+          # 删除原有 signingConfigs，后面重新注入
           content = re.sub(
               r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
               '',
@@ -246,14 +248,14 @@ jobs:
               content
           )
 
-          # Remove optimization block if present
+          # 移除 optimization
           content = re.sub(
               r'\s*optimization\s*\{[\s\S]*?\}',
               '',
               content
           )
 
-          # Force minify
+          # 强制开启混淆
           if "isMinifyEnabled" in content:
               content = re.sub(
                   r'isMinifyEnabled\s*=\s*(true|false)',
@@ -268,7 +270,7 @@ jobs:
                   count=1
               )
 
-          # Force resource shrinking
+          # 强制开启资源压缩
           if "isShrinkResources" in content:
               content = re.sub(
                   r'isShrinkResources\s*=\s*(true|false)',
@@ -283,7 +285,7 @@ jobs:
                   count=1
               )
 
-          # Add ProGuard if missing
+          # 添加 ProGuard
           if "proguardFiles(" not in content:
               proguard_block = '''
           proguardFiles(
@@ -299,14 +301,14 @@ jobs:
                   count=1
               )
 
-          # Remove sourceSets override
+          # 移除 sourceSets
           content = re.sub(
               r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}',
               '',
               content
           )
 
-          # Remove Firebase dependencies
+          # 移除 Firebase
           content = re.sub(
               r'\s*// Firebase',
               '',
@@ -337,7 +339,7 @@ jobs:
           print("[OK] app/build.gradle.kts modified")
           PYEOF
 
-          # Remove Firebase imports/usages
+          # 删除 Firebase 相关 Kotlin 引用
           find app/src/main/java -name "*.kt" \
             -exec sed -i '/import com\.google\.firebase/d' {} + || true
 
@@ -365,9 +367,35 @@ jobs:
           sed -i '/analytics/d' \
             app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          # ==========================================================
-          # 保留 UpdateChecker
-          # ==========================================================
+          # ============================================================
+          # Skill 注入：恢复
+          # ============================================================
+
+          mkdir -p app/src/main/assets/skills
+
+          if [ -d "mod/skills" ]; then
+            cp -rf mod/skills/* app/src/main/assets/skills/
+            echo "[OK] Skills injected"
+          else
+            echo "[WARN] mod/skills not found"
+          fi
+
+          if [ -f "mod/BundledSkillInstaller.java" ]; then
+            mkdir -p app/src/main/java/me/rerere/rikkahub
+
+            cp -f \
+              mod/BundledSkillInstaller.java \
+              app/src/main/java/me/rerere/rikkahub/BundledSkillInstaller.java
+
+            echo "[OK] BundledSkillInstaller injected"
+          else
+            echo "[WARN] BundledSkillInstaller.java not found"
+          fi
+
+          # ============================================================
+          # UpdateChecker 注入
+          # ============================================================
+
           if [ -f "mod/UpdateChecker.kt" ]; then
             TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
 
@@ -375,39 +403,96 @@ jobs:
 
             cp -f mod/UpdateChecker.kt "$TARGET"
 
-            echo "[OK] UpdateChecker.kt injected"
+            echo "[OK] UpdateChecker injected"
           fi
 
-          # ==========================================================
-          # 保留：默认一个助手且允许删除任意助手
-          # ==========================================================
+          # ============================================================
+          # 默认助手 + Skill Installer
+          # ============================================================
+
           python3 << 'PYEOF'
           from pathlib import Path
           import re
 
-          # Allow deleting any assistant by bypassing the
-          # DEFAULT_ASSISTANTS_IDS protection check.
+          # ------------------------------------------------------------
+          # RikkaHubApp.kt
+          # ------------------------------------------------------------
+
+          path = Path(
+              "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
+          )
+
+          if path.exists():
+              text = path.read_text(encoding="utf-8")
+
+              call = "BundledSkillInstaller.install(this)"
+
+              if call not in text:
+                  pattern = (
+                      r'(override fun onCreate\(\)\s*\{\s*'
+                      r'super\.onCreate\(\))'
+                  )
+
+                  if re.search(pattern, text):
+                      text = re.sub(
+                          pattern,
+                          r'\1\n\n        ' + call,
+                          text,
+                          count=1
+                      )
+
+                      path.write_text(
+                          text,
+                          encoding="utf-8"
+                      )
+
+                      print("[OK] BundledSkillInstaller.install injected")
+                  else:
+                      print(
+                          "[WARN] RikkaHubApp onCreate marker not found"
+                      )
+
+          # ------------------------------------------------------------
+          # DEFAULT_ASSISTANTS_IDS
+          # 允许任意助手删除
+          # ------------------------------------------------------------
+
           for p in Path("app/src/main/java").rglob("*.kt"):
               text = p.read_text(encoding="utf-8")
 
               if "DEFAULT_ASSISTANTS_IDS" in text:
-                  text = re.sub(
+                  new_text = re.sub(
                       r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
                       'true',
                       text
                   )
 
-                  p.write_text(text, encoding="utf-8")
+                  if new_text != text:
+                      p.write_text(
+                          new_text,
+                          encoding="utf-8"
+                      )
 
-          # Keep only one default assistant.
+                      print(
+                          f"[OK] Assistant delete restriction patched: {p}"
+                      )
+
+          # ------------------------------------------------------------
+          # 默认只保留一个助手
+          # ------------------------------------------------------------
+
           pref = Path(
-              "app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt"
+              "app/src/main/java/me/rerere/rikkahub/"
+              "data/datastore/PreferencesStore.kt"
           )
 
           if pref.exists():
               text = pref.read_text(encoding="utf-8")
 
-              pattern = r'internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?\n\)'
+              pattern = (
+                  r'internal val DEFAULT_ASSISTANTS = listOf\('
+                  r'[\s\S]*?\n\)'
+              )
 
               replacement = """internal val DEFAULT_ASSISTANTS = listOf(
               Assistant(
@@ -421,30 +506,38 @@ jobs:
                   text = re.sub(
                       pattern,
                       replacement,
-                      text
+                      text,
+                      count=1
                   )
 
-                  pref.write_text(text, encoding="utf-8")
+                  pref.write_text(
+                      text,
+                      encoding="utf-8"
+                  )
 
-                  print("[OK] DEFAULT_ASSISTANTS modified")
+                  print(
+                      "[OK] DEFAULT_ASSISTANTS reduced to one assistant"
+                  )
+
           PYEOF
 
-          # ==========================================================
-          # 保留原有 ProGuard
-          # ==========================================================
+          # ============================================================
+          # ProGuard
+          # ============================================================
+
           touch app/proguard-rules.pro
 
-          if ! grep -q "me.rerere.rikkahub.RikkaHubApp" app/proguard-rules.pro; then
+          if ! grep -q "BundledSkillInstaller" app/proguard-rules.pro; then
             cat >> app/proguard-rules.pro << 'RULESEOF'
+
+          -keep class me.rerere.rikkahub.BundledSkillInstaller { *; }
+          -keep class me.rerere.rikkahub.BundledSkillInstaller$* { *; }
           -keep class me.rerere.rikkahub.RikkaHubApp { *; }
           -keep class me.rerere.rikkahub.data.ai.tools.** { *; }
+
           RULESEOF
           fi
 
-      # ==============================================================
-      # Gemini MCP schema compatibility
-      # 保留
-      # ==============================================================
       - name: Check Gemini schema upstream fix
         if: steps.check_build.outputs.should_build == 'true'
         id: gemini_check
@@ -452,11 +545,13 @@ jobs:
         run: |
           set -e
 
-          FILE=$(find . \
-            -type f \
-            -name "GoogleProvider.kt" \
-            -not -path "./.git/*" \
-            | head -n 1)
+          FILE=$(
+            find . \
+              -type f \
+              -name "GoogleProvider.kt" \
+              -not -path "./.git/*" |
+            head -n 1
+          )
 
           if [ -z "$FILE" ]; then
             echo "[ERROR] GoogleProvider.kt not found."
@@ -503,9 +598,13 @@ jobs:
           import os
           import re
 
-          path = Path(os.environ["GEMINI_PROVIDER_FILE"])
+          path = Path(
+              os.environ["GEMINI_PROVIDER_FILE"]
+          )
 
-          text = path.read_text(encoding="utf-8")
+          text = path.read_text(
+              encoding="utf-8"
+          )
 
           if "sanitizeGeminiSchema" in text:
               raise SystemExit(0)
@@ -565,18 +664,26 @@ jobs:
           )
 
           sanitizer = '''
+
           private fun sanitizeGeminiSchema(
               element: kotlinx.serialization.json.JsonElement
           ): kotlinx.serialization.json.JsonElement {
               return when (element) {
                   is JsonObject -> {
                       val map = element.toMutableMap()
-                      val type = (map["type"] as? JsonPrimitive)?.contentOrNull
 
-                      if (type == "array" && !map.containsKey("items")) {
-                          map["items"] = buildJsonObject {
-                              put("type", "string")
-                          }
+                      val type =
+                          (map["type"] as? JsonPrimitive)
+                              ?.contentOrNull
+
+                      if (
+                          type == "array" &&
+                          !map.containsKey("items")
+                      ) {
+                          map["items"] =
+                              buildJsonObject {
+                                  put("type", "string")
+                              }
                       }
 
                       JsonObject(
@@ -602,21 +709,24 @@ jobs:
           last_brace = text.rfind("}")
 
           if last_brace == -1:
-              raise SystemExit("[ERROR] no closing brace")
+              raise SystemExit(
+                  "[ERROR] no closing brace"
+              )
 
-          path.write_text(
+          text = (
               text[:last_brace]
               + sanitizer
-              + text[last_brace:],
+              + text[last_brace:]
+          )
+
+          path.write_text(
+              text,
               encoding="utf-8"
           )
 
           print("[OK] Gemini patch done")
           PYEOF
 
-      # ==============================================================
-      # 保留 MCP incomplete-reply patches
-      # ==============================================================
       - name: Apply MCP incomplete-reply patches
         if: steps.check_build.outputs.should_build == 'true'
         run: |
@@ -628,56 +738,55 @@ jobs:
             [ -f "$p" ] || return 0
 
             if git apply --check "$p" 2>/dev/null; then
+
               git apply "$p"
               echo "[OK] applied $p"
 
             elif git apply --reverse --check "$p" 2>/dev/null; then
+
               echo "[SKIP] already applied $p"
 
             else
+
               echo "[FAIL] cannot apply $p — upstream changed, fix the patch"
+
               git apply --check "$p" || true
+
               exit 1
+
             fi
           }
 
           apply_one mod/fix_mcp_incomplete_reply.patch
           apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
 
-      # ==============================================================
-      # Verify existing custom modifications
-      # 不再检查 BundledSkillInstaller
-      # ==============================================================
-      - name: Verify Custom Mods Before Build
+      - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
         run: |
+          echo "=== Verify Skill files ==="
+
+          if [ -d "app/src/main/assets/skills" ]; then
+            find app/src/main/assets/skills -type f | sort
+          else
+            echo "[WARN] app/src/main/assets/skills not found"
+          fi
+
+          echo "=== Verify BundledSkillInstaller ==="
+
+          grep -R \
+            "class BundledSkillInstaller" \
+            app/src/main/java || true
+
+          grep -R \
+            "BundledSkillInstaller.install" \
+            app/src/main/java || true
+
           echo "=== Verify UpdateChecker ==="
 
           grep -n \
             "api.github.com/repos/klcb2010" \
             app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt \
             || echo "[WARN] UpdateChecker"
-
-          echo "=== Verify MCP patches ==="
-
-          if [ -f "mod/fix_mcp_incomplete_reply.patch" ]; then
-            echo "[OK] fix_mcp_incomplete_reply.patch exists"
-          else
-            echo "[WARN] fix_mcp_incomplete_reply.patch missing"
-          fi
-
-          if [ -f "mod/fix_mcp_incomplete_reply_nonstream.patch" ]; then
-            echo "[OK] fix_mcp_incomplete_reply_nonstream.patch exists"
-          else
-            echo "[WARN] fix_mcp_incomplete_reply_nonstream.patch missing"
-          fi
-
-          echo "=== Verify default assistant modifications ==="
-
-          grep -n \
-            "DEFAULT_ASSISTANTS" \
-            app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt \
-            || true
 
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
@@ -694,14 +803,12 @@ jobs:
           if gh api \
             "repos/${{ github.repository }}/git/ref/tags/$TAG" \
             >/dev/null 2>&1; then
-
             TAG_EXISTS=true
           fi
 
           if gh api \
             "repos/${{ github.repository }}/releases/tags/$TAG" \
             >/dev/null 2>&1; then
-
             RELEASE_EXISTS=true
           fi
 
@@ -716,9 +823,10 @@ jobs:
 
           fi
 
-      # ==============================================================
+      # ================================================================
       # 从 mod 复制 keystore
-      # ==============================================================
+      # ================================================================
+
       - name: Copy keystore from mod
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
@@ -757,10 +865,15 @@ jobs:
           import os
           import re
 
-          path = Path("app/build.gradle.kts")
+          path = Path(
+              "app/build.gradle.kts"
+          )
 
-          text = path.read_text(encoding="utf-8")
+          text = path.read_text(
+              encoding="utf-8"
+          )
 
+          # 删除已有 signingConfigs
           text = re.sub(
               r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
               '',
@@ -797,7 +910,9 @@ jobs:
           '''
 
           if "android {" not in text:
-              raise SystemExit("android { not found")
+              raise SystemExit(
+                  "android { not found"
+              )
 
           text = text.replace(
               "android {",
@@ -805,7 +920,10 @@ jobs:
               1
           )
 
-          if 'signingConfig = signingConfigs.getByName("release")' not in text:
+          if (
+              'signingConfig = signingConfigs.getByName("release")'
+              not in text
+          ):
               text = re.sub(
                   r'(release\s*\{)',
                   r'\1\n            signingConfig = signingConfigs.getByName("release")',
@@ -813,7 +931,10 @@ jobs:
                   count=1
               )
 
-          path.write_text(text, encoding="utf-8")
+          path.write_text(
+              text,
+              encoding="utf-8"
+          )
 
           print("[OK] signingConfigs injected")
           PYEOF
@@ -842,14 +963,18 @@ jobs:
 
           if [ -d "$ANDROID_HOME/build-tools" ]; then
 
-            APKSIGNER=$(find \
-              "$ANDROID_HOME/build-tools" \
-              -name apksigner \
-              | sort -V \
-              | tail -1)
+            APKSIGNER=$(
+              find "$ANDROID_HOME/build-tools" \
+                -name apksigner |
+              sort -V |
+              tail -1
+            )
 
-            [ -n "$APKSIGNER" ] && \
-              "$APKSIGNER" verify --print-certs "$APK" || true
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify \
+                --print-certs \
+                "$APK"
+            fi
 
           fi
 
