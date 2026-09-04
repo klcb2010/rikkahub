@@ -18,6 +18,7 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git Identity
         run: |
@@ -87,7 +88,11 @@ jobs:
           if ! git diff --staged --quiet; then
             git commit -m "sync: merge upstream with protected local files"
 
-            git push origin master || git push origin main
+            git fetch origin master
+            if ! git push origin HEAD:master; then
+              git pull --rebase origin master
+              git push origin HEAD:master
+            fi
 
             echo "has_sync_changes=true" >> "$GITHUB_OUTPUT"
           else
@@ -210,7 +215,6 @@ jobs:
           with open(gradle_path, "r", encoding="utf-8") as f:
               content = f.read()
 
-          # 移除 Google Services / Firebase 插件
           content = re.sub(
               r'\s*alias\(libs\.plugins\.google\.services\)',
               '',
@@ -235,7 +239,6 @@ jobs:
               content
           )
 
-          # 删除原有 signingConfigs，后面重新注入
           content = re.sub(
               r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
               '',
@@ -248,14 +251,12 @@ jobs:
               content
           )
 
-          # 移除 optimization
           content = re.sub(
               r'\s*optimization\s*\{[\s\S]*?\}',
               '',
               content
           )
 
-          # 强制开启混淆
           if "isMinifyEnabled" in content:
               content = re.sub(
                   r'isMinifyEnabled\s*=\s*(true|false)',
@@ -270,7 +271,6 @@ jobs:
                   count=1
               )
 
-          # 强制开启资源压缩
           if "isShrinkResources" in content:
               content = re.sub(
                   r'isShrinkResources\s*=\s*(true|false)',
@@ -285,7 +285,6 @@ jobs:
                   count=1
               )
 
-          # 添加 ProGuard
           if "proguardFiles(" not in content:
               proguard_block = '''
           proguardFiles(
@@ -301,14 +300,12 @@ jobs:
                   count=1
               )
 
-          # 移除 sourceSets
           content = re.sub(
               r'\n\s*sourceSets\s*\{[\s\S]*?\n\s*\}',
               '',
               content
           )
 
-          # 移除 Firebase
           content = re.sub(
               r'\s*// Firebase',
               '',
@@ -339,7 +336,6 @@ jobs:
           print("[OK] app/build.gradle.kts modified")
           PYEOF
 
-          # 删除 Firebase 相关 Kotlin 引用
           find app/src/main/java -name "*.kt" \
             -exec sed -i '/import com\.google\.firebase/d' {} + || true
 
@@ -367,10 +363,6 @@ jobs:
           sed -i '/analytics/d' \
             app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatVM.kt || true
 
-          # ============================================================
-          # Skill 注入：恢复
-          # ============================================================
-
           mkdir -p app/src/main/assets/skills
 
           if [ -d "mod/skills" ]; then
@@ -392,10 +384,6 @@ jobs:
             echo "[WARN] BundledSkillInstaller.java not found"
           fi
 
-          # ============================================================
-          # UpdateChecker 注入
-          # ============================================================
-
           if [ -f "mod/UpdateChecker.kt" ]; then
             TARGET="app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt"
 
@@ -406,17 +394,9 @@ jobs:
             echo "[OK] UpdateChecker injected"
           fi
 
-          # ============================================================
-          # 默认助手 + Skill Installer
-          # ============================================================
-
           python3 << 'PYEOF'
           from pathlib import Path
           import re
-
-          # ------------------------------------------------------------
-          # RikkaHubApp.kt
-          # ------------------------------------------------------------
 
           path = Path(
               "app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt"
@@ -452,78 +432,7 @@ jobs:
                           "[WARN] RikkaHubApp onCreate marker not found"
                       )
 
-          # ------------------------------------------------------------
-          # DEFAULT_ASSISTANTS_IDS
-          # 允许任意助手删除
-          # ------------------------------------------------------------
-
-          for p in Path("app/src/main/java").rglob("*.kt"):
-              text = p.read_text(encoding="utf-8")
-
-              if "DEFAULT_ASSISTANTS_IDS" in text:
-                  new_text = re.sub(
-                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
-                      'true',
-                      text
-                  )
-
-                  if new_text != text:
-                      p.write_text(
-                          new_text,
-                          encoding="utf-8"
-                      )
-
-                      print(
-                          f"[OK] Assistant delete restriction patched: {p}"
-                      )
-
-          # ------------------------------------------------------------
-          # 默认只保留一个助手
-          # ------------------------------------------------------------
-
-          pref = Path(
-              "app/src/main/java/me/rerere/rikkahub/"
-              "data/datastore/PreferencesStore.kt"
-          )
-
-          if pref.exists():
-              text = pref.read_text(encoding="utf-8")
-
-              pattern = (
-                  r'internal val DEFAULT_ASSISTANTS = listOf\('
-                  r'[\s\S]*?\n\)'
-              )
-
-              replacement = """internal val DEFAULT_ASSISTANTS = listOf(
-              Assistant(
-                  id = DEFAULT_ASSISTANT_ID,
-                  name = "",
-                  systemPrompt = ""
-              )
-          )"""
-
-              if re.search(pattern, text):
-                  text = re.sub(
-                      pattern,
-                      replacement,
-                      text,
-                      count=1
-                  )
-
-                  pref.write_text(
-                      text,
-                      encoding="utf-8"
-                  )
-
-                  print(
-                      "[OK] DEFAULT_ASSISTANTS reduced to one assistant"
-                  )
-
           PYEOF
-
-          # ============================================================
-          # ProGuard
-          # ============================================================
 
           touch app/proguard-rules.pro
 
@@ -537,195 +446,6 @@ jobs:
 
           RULESEOF
           fi
-
-      - name: Check Gemini schema upstream fix
-        if: steps.check_build.outputs.should_build == 'true'
-        id: gemini_check
-        shell: bash
-        run: |
-          set -e
-
-          FILE=$(
-            find . \
-              -type f \
-              -name "GoogleProvider.kt" \
-              -not -path "./.git/*" |
-            head -n 1
-          )
-
-          if [ -z "$FILE" ]; then
-            echo "[ERROR] GoogleProvider.kt not found."
-            exit 1
-          fi
-
-          echo "google_provider_file=$FILE" >> "$GITHUB_OUTPUT"
-
-          if grep -q "sanitizeGeminiSchema" "$FILE"; then
-            echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if grep -Eq \
-            '"items"|put[[:space:]]*\([[:space:]]*"items"|put[[:space:]]*\([[:space:]]*key[[:space:]]*=[[:space:]]*"items"' \
-            "$FILE" \
-            && \
-            grep -Eq \
-            '"array"|type.*array|array.*type|contentOrNull.*array' \
-            "$FILE"; then
-
-            echo "need_gemini_patch=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "need_gemini_patch=true" >> "$GITHUB_OUTPUT"
-
-      - name: Patch Gemini MCP schema compatibility
-        if: steps.check_build.outputs.should_build == 'true' && steps.gemini_check.outputs.need_gemini_patch == 'true'
-        shell: bash
-        env:
-          GEMINI_PROVIDER_FILE: ${{ steps.gemini_check.outputs.google_provider_file }}
-        run: |
-          set -euo pipefail
-
-          FILE="$GEMINI_PROVIDER_FILE"
-
-          [ -n "$FILE" ] && [ -f "$FILE" ] || exit 1
-
-          grep -q "sanitizeGeminiSchema" "$FILE" && exit 0
-
-          python3 << 'PYEOF'
-          from pathlib import Path
-          import os
-          import re
-
-          path = Path(
-              os.environ["GEMINI_PROVIDER_FILE"]
-          )
-
-          text = path.read_text(
-              encoding="utf-8"
-          )
-
-          if "sanitizeGeminiSchema" in text:
-              raise SystemExit(0)
-
-          pattern = re.compile(
-              r'''
-              put\s*\(
-                  \s*key\s*=\s*"parameters"\s*,\s*
-                  element\s*=\s*
-                  json\.encodeToJsonElement\s*\(
-                      \s*tool\.parameters\(\)\s*
-                  \)
-                  \s*
-                  \.removeElements\s*\(
-                      \s*listOf\s*\(
-                          \s*"const"\s*,\s*
-                          \s*"exclusiveMaximum"\s*,\s*
-                          \s*"exclusiveMinimum"\s*,\s*
-                          \s*"format"\s*,\s*
-                          \s*"additionalProperties"\s*,\s*
-                          \s*"enum"\s*,?
-                      \s*\)
-                  \s*\)
-              \s*\)
-              ''',
-              re.VERBOSE | re.DOTALL,
-          )
-
-          match = pattern.search(text)
-
-          if not match:
-              raise SystemExit(
-                  "[ERROR] Gemini parameters block not found."
-              )
-
-          replacement = '''put(
-              key = "parameters",
-              element = sanitizeGeminiSchema(
-                  json.encodeToJsonElement(tool.parameters())
-                      .removeElements(
-                          listOf(
-                              "const",
-                              "exclusiveMaximum",
-                              "exclusiveMinimum",
-                              "format",
-                              "additionalProperties",
-                              "enum",
-                          )
-                      )
-              )
-          )'''
-
-          text = (
-              text[:match.start()]
-              + replacement
-              + text[match.end():]
-          )
-
-          sanitizer = '''
-
-          private fun sanitizeGeminiSchema(
-              element: kotlinx.serialization.json.JsonElement
-          ): kotlinx.serialization.json.JsonElement {
-              return when (element) {
-                  is JsonObject -> {
-                      val map = element.toMutableMap()
-
-                      val type =
-                          (map["type"] as? JsonPrimitive)
-                              ?.contentOrNull
-
-                      if (
-                          type == "array" &&
-                          !map.containsKey("items")
-                      ) {
-                          map["items"] =
-                              buildJsonObject {
-                                  put("type", "string")
-                              }
-                      }
-
-                      JsonObject(
-                          map.mapValues { (_, value) ->
-                              sanitizeGeminiSchema(value)
-                          }
-                      )
-                  }
-
-                  is JsonArray -> {
-                      JsonArray(
-                          element.map { child ->
-                              sanitizeGeminiSchema(child)
-                          }
-                      )
-                  }
-
-                  else -> element
-              }
-          }
-          '''
-
-          last_brace = text.rfind("}")
-
-          if last_brace == -1:
-              raise SystemExit(
-                  "[ERROR] no closing brace"
-              )
-
-          text = (
-              text[:last_brace]
-              + sanitizer
-              + text[last_brace:]
-          )
-
-          path.write_text(
-              text,
-              encoding="utf-8"
-          )
-
-          print("[OK] Gemini patch done")
-          PYEOF
 
       - name: Apply MCP incomplete-reply patches
         if: steps.check_build.outputs.should_build == 'true'
@@ -759,6 +479,7 @@ jobs:
 
           apply_one mod/fix_mcp_incomplete_reply.patch
           apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
+          apply_one mod/fix_mcp_lazy_tools.patch
 
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
@@ -787,6 +508,12 @@ jobs:
             "api.github.com/repos/klcb2010" \
             app/src/main/java/me/rerere/rikkahub/utils/UpdateChecker.kt \
             || echo "[WARN] UpdateChecker"
+
+          echo "=== Verify MCP lazy tools ==="
+
+          grep -n "mcp_list_tools\|mcp_call_tool" \
+            app/src/main/java/me/rerere/rikkahub/service/ChatService.kt \
+            || echo "[WARN] mcp lazy tools not in ChatService"
 
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
@@ -822,10 +549,6 @@ jobs:
             echo "should_release=true" >> "$GITHUB_OUTPUT"
 
           fi
-
-      # ================================================================
-      # 从 mod 复制 keystore
-      # ================================================================
 
       - name: Copy keystore from mod
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
@@ -873,7 +596,6 @@ jobs:
               encoding="utf-8"
           )
 
-          # 删除已有 signingConfigs
           text = re.sub(
               r'\n\s*signingConfigs\s*\{[\s\S]*?\n\s*\}',
               '',
