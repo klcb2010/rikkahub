@@ -545,8 +545,14 @@ jobs:
           }
 
           apply_one mod/fix_mcp_incomplete_reply.patch
-          apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
-          apply_one mod/fix_mcp_lazy_tools.patch
+            apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
+
+          # MCP lazy tools: Python inject（避免手机上传 patch 损坏）
+          if [ -f mod/inject_mcp_lazy_tools.py ]; then
+            python3 mod/inject_mcp_lazy_tools.py
+          else
+            echo "[WARN] mod/inject_mcp_lazy_tools.py not found, skip lazy MCP"
+          fi
 
       - name: Verify Installer Before Build
         if: steps.check_build.outputs.should_build == 'true'
