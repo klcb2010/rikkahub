@@ -1,0 +1,157 @@
+diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
+--- a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
++++ b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
+@@ -26,7 +26,14 @@
+ import kotlinx.coroutines.flow.update
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
+ import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.put
++import kotlinx.serialization.json.putJsonObject
++import me.rerere.ai.core.InputSchema
+ import me.rerere.ai.core.MessageRole
+ import me.rerere.ai.core.ReasoningLevel
+ import me.rerere.ai.core.Tool
+@@ -609,32 +616,117 @@
+                             )
+                         )
+                     }
+-                    mcpManager.getAllAvailableTools().also { allTools ->
+-                        val invalidNames = allTools
+-                            .map { it.second }
+-                            .distinct()
+-                            .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
+-                        if (invalidNames.isNotEmpty()) {
+-                            addError(
+-                                error = IllegalStateException(
+-                                    context.getString(
+-                                        R.string.error_mcp_invalid_server_name,
+-                                        invalidNames.joinToString(", ")
++                    val mcpTools = mcpManager.getAllAvailableTools()
++                    val invalidNames = mcpTools
++                        .map { it.second }
++                        .distinct()
++                        .filter { name -> name.isEmpty() || !name.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' } }
++                    if (invalidNames.isNotEmpty()) {
++                        addError(
++                            error = IllegalStateException(
++                                context.getString(
++                                    R.string.error_mcp_invalid_server_name,
++                                    invalidNames.joinToString(", ")
++                                )
++                            ),
++                            conversationId = conversationId,
++                        )
++                        return
++                    }
++                    if (mcpTools.isNotEmpty()) {
++                        val byName = mcpTools.associate { (serverId, serverName, tool) ->
++                            "mcp__${serverName}__${tool.name}" to Triple(serverId, serverName, tool)
++                        }
++                        add(
++                            Tool(
++                                name = "mcp_list_tools",
++                                description = "List MCP tools available on this device. Call this first when you need APK/file/native capabilities. Use query to filter (apk, dex, native, file, patch).",
++                                parameters = {
++                                    InputSchema.Obj(
++                                        properties = buildJsonObject {
++                                            putJsonObject("query") {
++                                                put("type", "string")
++                                                put("description", "Optional keyword to filter tools, e.g. apk")
++                                            }
++                                        },
++                                        required = emptyList()
++                                    )
++                                },
++                                execute = { args ->
++                                    val query = (args as? JsonObject)
++                                        ?.get("query")
++                                        ?.jsonPrimitive
++                                        ?.contentOrNull
++                                        ?.lowercase()
++                                        .orEmpty()
++                                    val lines = byName.entries
++                                        .filter { (name, triple) ->
++                                            query.isBlank() ||
++                                                name.lowercase().contains(query) ||
++                                                (triple.third.description ?: "").lowercase().contains(query)
++                                        }
++                                        .joinToString("\n") { (name, triple) ->
++                                            val tool = triple.third
++                                            val desc = (tool.description ?: "")
++                                                .replace("\n", " ")
++                                                .take(160)
++                                            val req = (tool.inputSchema as? InputSchema.Obj)
++                                                ?.required
++                                                ?.joinToString(",")
++                                                ?: ""
++                                            "- $name | $desc | required=[$req]"
++                                        }
++                                    listOf(
++                                        UIMessagePart.Text(
++                                            lines.ifBlank { "No matching MCP tools." }
+                                         )
+-                                ),
+-                                conversationId = conversationId,
++                                    )
++                                },
+                             )
+-                            return
+-                        }
+-                    }.forEach { (serverId, serverName, tool) ->
++                        )
+                         add(
+                             Tool(
+-                                name = "mcp__${serverName}__${tool.name}",
+-                                description = tool.description ?: "",
+-                                parameters = { tool.inputSchema },
+-                                needsApproval = { tool.needsApproval },
+-                                execute = {
+-                                    mcpManager.callTool(serverId, tool.name, it.jsonObject)
++                                name = "mcp_call_tool",
++                                description = "Execute one MCP tool. `tool` must be the exact name from mcp_list_tools.",
++                                parameters = {
++                                    InputSchema.Obj(
++                                        properties = buildJsonObject {
++                                            putJsonObject("tool") {
++                                                put("type", "string")
++                                                put("description", "Exact name from mcp_list_tools")
++                                            }
++                                            putJsonObject("arguments") {
++                                                put("type", "object")
++                                                put("description", "Arguments object for that tool")
++                                            }
++                                        },
++                                        required = listOf("tool")
++                                    )
++                                },
++                                needsApproval = { args ->
++                                    val name = (args as? JsonObject)
++                                        ?.get("tool")
++                                        ?.jsonPrimitive
++                                        ?.contentOrNull
++                                    byName[name]?.third?.needsApproval == true
++                                },
++                                execute = { args ->
++                                    val obj = args as? JsonObject
++                                    val name = obj?.get("tool")?.jsonPrimitive?.contentOrNull
++                                    val found = byName[name]
++                                    if (found == null) {
++                                        listOf(
++                                            UIMessagePart.Text(
++                                                "Unknown tool: $name. Call mcp_list_tools first."
++                                            )
++                                        )
++                                    } else {
++                                        val (serverId, _, tool) = found
++                                        val callArgs = (obj?.get("arguments") as? JsonObject)
++                                            ?: JsonObject(emptyMap())
++                                        mcpManager.callTool(serverId, tool.name, callArgs)
++                                    }
+                                 },
+                             )
+                         )
