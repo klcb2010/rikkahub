@@ -432,6 +432,73 @@ jobs:
                           "[WARN] RikkaHubApp onCreate marker not found"
                       )
 
+          # ------------------------------------------------------------
+          # DEFAULT_ASSISTANTS_IDS
+          # 允许任意助手删除
+          # ------------------------------------------------------------
+
+          for p in Path("app/src/main/java").rglob("*.kt"):
+              text = p.read_text(encoding="utf-8")
+
+              if "DEFAULT_ASSISTANTS_IDS" in text:
+                  new_text = re.sub(
+                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
+                      'true',
+                      text
+                  )
+
+                  if new_text != text:
+                      p.write_text(
+                          new_text,
+                          encoding="utf-8"
+                      )
+
+                      print(
+                          f"[OK] Assistant delete restriction patched: {p}"
+                      )
+
+          # ------------------------------------------------------------
+          # 默认只保留一个助手
+          # ------------------------------------------------------------
+
+          pref = Path(
+              "app/src/main/java/me/rerere/rikkahub/"
+              "data/datastore/PreferencesStore.kt"
+          )
+
+          if pref.exists():
+              text = pref.read_text(encoding="utf-8")
+
+              pattern = (
+                  r'internal val DEFAULT_ASSISTANTS = listOf\('
+                  r'[\s\S]*?\n\)'
+              )
+
+              replacement = """internal val DEFAULT_ASSISTANTS = listOf(
+              Assistant(
+                  id = DEFAULT_ASSISTANT_ID,
+                  name = "",
+                  systemPrompt = ""
+              )
+          )"""
+
+              if re.search(pattern, text):
+                  text = re.sub(
+                      pattern,
+                      replacement,
+                      text,
+                      count=1
+                  )
+
+                  pref.write_text(
+                      text,
+                      encoding="utf-8"
+                  )
+
+                  print(
+                      "[OK] DEFAULT_ASSISTANTS reduced to one assistant"
+                  )
+
           PYEOF
 
           touch app/proguard-rules.pro
