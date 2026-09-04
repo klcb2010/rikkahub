@@ -16,7 +16,7 @@ diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/s
  import me.rerere.ai.core.MessageRole
  import me.rerere.ai.core.ReasoningLevel
  import me.rerere.ai.core.Tool
-@@ -609,32 +616,117 @@
+@@ -609,36 +616,120 @@
                              )
                          )
                      }
@@ -31,6 +31,13 @@ diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/s
 -                                    context.getString(
 -                                        R.string.error_mcp_invalid_server_name,
 -                                        invalidNames.joinToString(", ")
+-                                    )
+-                                ),
+-                                conversationId = conversationId,
+-                            )
+-                            return
+-                        }
+-                    }.forEach { (serverId, serverName, tool) ->
 +                    val mcpTools = mcpManager.getAllAvailableTools()
 +                    val invalidNames = mcpTools
 +                        .map { it.second }
@@ -52,8 +59,14 @@ diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/s
 +                        val byName = mcpTools.associate { (serverId, serverName, tool) ->
 +                            "mcp__${serverName}__${tool.name}" to Triple(serverId, serverName, tool)
 +                        }
-+                        add(
-+                            Tool(
+                         add(
+                             Tool(
+-                                name = "mcp__${serverName}__${tool.name}",
+-                                description = tool.description ?: "",
+-                                parameters = { tool.inputSchema },
+-                                needsApproval = { tool.needsApproval },
+-                                execute = {
+-                                    mcpManager.callTool(serverId, tool.name, it.jsonObject)
 +                                name = "mcp_list_tools",
 +                                description = "List MCP tools available on this device. Call this first when you need APK/file/native capabilities. Use query to filter (apk, dex, native, file, patch).",
 +                                parameters = {
@@ -94,24 +107,13 @@ diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/s
 +                                    listOf(
 +                                        UIMessagePart.Text(
 +                                            lines.ifBlank { "No matching MCP tools." }
-                                         )
--                                ),
--                                conversationId = conversationId,
++                                        )
 +                                    )
-+                                },
+                                 },
                              )
--                            return
--                        }
--                    }.forEach { (serverId, serverName, tool) ->
-+                        )
-                         add(
-                             Tool(
--                                name = "mcp__${serverName}__${tool.name}",
--                                description = tool.description ?: "",
--                                parameters = { tool.inputSchema },
--                                needsApproval = { tool.needsApproval },
--                                execute = {
--                                    mcpManager.callTool(serverId, tool.name, it.jsonObject)
+                         )
++                        add(
++                            Tool(
 +                                name = "mcp_call_tool",
 +                                description = "Execute one MCP tool. `tool` must be the exact name from mcp_list_tools.",
 +                                parameters = {
@@ -152,6 +154,10 @@ diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/s
 +                                            ?: JsonObject(emptyMap())
 +                                        mcpManager.callTool(serverId, tool.name, callArgs)
 +                                    }
-                                 },
-                             )
-                         )
++                                },
++                            )
++                        )
++                    }
+                 },
+             ).onCompletion {
+                 // 可能被取消了，或者意外结束，兜底更新
