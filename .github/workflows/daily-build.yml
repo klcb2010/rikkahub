@@ -794,6 +794,41 @@ jobs:
 
           fi
 
+      - name: Fetch upstream release notes
+        if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
+        id: notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VER="${{ steps.version.outputs.version_name }}"
+          TAG="${{ steps.version.outputs.tag_name }}"
+
+          BODY=""
+          for t in "$VER" "v$VER" "$TAG"; do
+            BODY=$(gh api "repos/rikkahub/rikkahub/releases/tags/$t" --jq .body 2>/dev/null || true)
+            if [ -n "$BODY" ] && [ "$BODY" != "null" ]; then
+              echo "Got upstream notes from tag: $t"
+              break
+            fi
+            BODY=""
+          done
+
+          {
+            echo "body<<EOF"
+            echo "同步构建 \`${VER}\`（已签名）"
+            echo ""
+            if [ -n "$BODY" ]; then
+              echo "### 上游更新说明"
+              echo ""
+              printf '%s\n' "$BODY"
+            else
+              echo "_未能获取上游 release notes，请查看 https://github.com/rikkahub/rikkahub/releases_"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v2
@@ -802,7 +837,6 @@ jobs:
           name: RikkaHub ${{ steps.version.outputs.version_name }}
           draft: false
           prerelease: false
-          body: |
-            同步构建 `${{ steps.version.outputs.version_name }}`（已签名）
+          body: ${{ steps.notes.outputs.body }}
           files: |
             app/build/outputs/apk/release/*.apk
