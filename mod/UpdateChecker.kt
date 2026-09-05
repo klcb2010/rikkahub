@@ -95,8 +95,8 @@ class UpdateChecker(
                 )
                 return UpdateInfo(
                     version = version,
-                    publishedAt = "",
-                    changelog = "RikkaHub $version",
+                    publishedAt = java.time.Instant.now().toString(),
+                    changelog = "同步构建 $version",
                     downloads = downloads,
                 )
             } catch (e: Exception) {
