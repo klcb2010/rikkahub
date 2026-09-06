@@ -817,7 +817,7 @@ jobs:
 
           {
             echo "body<<EOF"
-            echo "同步构建 \`${VER}\`（已签名）"
+            echo "同步构建 \`${VER}\`"
             echo ""
             if [ -n "$BODY" ]; then
               echo "### 上游更新说明"
