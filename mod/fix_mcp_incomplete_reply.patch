@@ -1,6 +1,7 @@
---- a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
-+++ b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
-@@ -433,16 +433,26 @@
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationLoop.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationLoop.kt
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationLoop.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationLoop.kt
+@@ -405,16 +405,29 @@
                  // 每次重试都从本次模型调用开始前的消息快照重新合并，避免将重试响应
                  // 追加到已经展示的半截回复后面。预先创建助手消息可让所有尝试复用同一 ID，
                  // ChatService 因而会覆盖当前分支，而不是创建新的候选消息。
@@ -11,7 +12,10 @@
 +                // 带 tool_call 的旧消息上，否则会出现最终回答被覆盖/截断/不完整。
 +                val lastMessage = messages.lastOrNull()
 +                val lastHasToolParts = lastMessage?.parts?.any { part ->
-+                    part is UIMessagePart.Tool || part is UIMessagePart.ServerTool
++                    part is UIMessagePart.Tool ||
++                        part is UIMessagePart.ServerTool ||
++                        part is UIMessagePart.ToolCall ||
++                        part is UIMessagePart.ToolResult
 +                } == true
 +                val responseBaseMessages = when {
 +                    lastMessage?.role == MessageRole.ASSISTANT && !lastHasToolParts -> {
