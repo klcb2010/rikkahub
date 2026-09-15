@@ -25,8 +25,65 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      # ================================================================
+      # 仅当：手动触发，或上游已发布新 Release 且本仓库尚未发同版本
+      # ================================================================
+      - name: Check upstream release gate
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "reason=manual workflow_dispatch"
+            echo "should_proceed=true" >> "$GITHUB_OUTPUT"
+            echo "upstream_tag=" >> "$GITHUB_OUTPUT"
+            echo "upstream_version=" >> "$GITHUB_OUTPUT"
+            echo "our_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          UP_TAG=$(
+            gh api repos/rikkahub/rikkahub/releases/latest --jq .tag_name 2>/dev/null || true
+          )
+
+          if [ -z "$UP_TAG" ] || [ "$UP_TAG" = "null" ]; then
+            echo "Cannot read upstream latest release, skip."
+            echo "should_proceed=false" >> "$GITHUB_OUTPUT"
+            echo "upstream_tag=" >> "$GITHUB_OUTPUT"
+            echo "upstream_version=" >> "$GITHUB_OUTPUT"
+            echo "our_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # 上游可能是 2.5.1 或 v2.5.1
+          UP_VER="${UP_TAG#v}"
+          OUR_TAG="v${UP_VER}"
+
+          echo "upstream_tag=${UP_TAG}" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=${UP_VER}" >> "$GITHUB_OUTPUT"
+          echo "our_tag=${OUR_TAG}" >> "$GITHUB_OUTPUT"
+
+          ALREADY=false
+          if gh api "repos/${{ github.repository }}/releases/tags/${OUR_TAG}" >/dev/null 2>&1; then
+            ALREADY=true
+          elif gh api "repos/${{ github.repository }}/releases/tags/${UP_VER}" >/dev/null 2>&1; then
+            ALREADY=true
+          fi
+
+          if [ "$ALREADY" = "true" ]; then
+            echo "Upstream ${UP_TAG} already released here as ${OUR_TAG} (or ${UP_VER}), skip."
+            echo "should_proceed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New upstream release ${UP_TAG} → will sync & build ${OUR_TAG}"
+            echo "should_proceed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sync Upstream with Protected Files
         id: sync
+        if: steps.gate.outputs.should_proceed == 'true'
         run: |
           set -e
 
@@ -102,6 +159,7 @@ jobs:
 
       - name: Extract Version Name & Check Tag
         id: version
+        if: steps.gate.outputs.should_proceed == 'true'
         run: |
           VERSION_NAME=$(
             grep -E 'versionName\s*=' app/build.gradle.kts |
@@ -135,20 +193,11 @@ jobs:
       - name: Check Should Build
         id: check_build
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-
+          if [ "${{ steps.gate.outputs.should_proceed }}" = "true" ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
-
-          elif [ "${{ steps.version.outputs.tag_exists }}" = "false" ] || \
-               [ "${{ steps.sync.outputs.has_sync_changes }}" = "true" ]; then
-
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-
           else
-
             echo "should_build=false" >> "$GITHUB_OUTPUT"
-            echo "无新提交且版本号标签未更新，跳过构建。"
-
+            echo "跳过：上游无新 Release，或本仓库已发布同版本（手动触发可强制构建）。"
           fi
 
       - name: Set up JDK 17
@@ -432,11 +481,6 @@ jobs:
                           "[WARN] RikkaHubApp onCreate marker not found"
                       )
 
-          # ------------------------------------------------------------
-          # DEFAULT_ASSISTANTS_IDS
-          # 允许任意助手删除
-          # ------------------------------------------------------------
-
           for p in Path("app/src/main/java").rglob("*.kt"):
               text = p.read_text(encoding="utf-8")
 
@@ -456,10 +500,6 @@ jobs:
                       print(
                           f"[OK] Assistant delete restriction patched: {p}"
                       )
-
-          # ------------------------------------------------------------
-          # 默认只保留一个助手
-          # ------------------------------------------------------------
 
           pref = Path(
               "app/src/main/java/me/rerere/rikkahub/"
@@ -545,9 +585,8 @@ jobs:
           }
 
           apply_one mod/fix_mcp_incomplete_reply.patch
-            apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
+          apply_one mod/fix_mcp_incomplete_reply_nonstream.patch
 
-          # MCP lazy tools: Python inject（避免手机上传 patch 损坏）
           if [ -f mod/inject_mcp_lazy_tools.py ]; then
             python3 mod/inject_mcp_lazy_tools.py
           else
@@ -585,8 +624,8 @@ jobs:
           echo "=== Verify MCP lazy tools ==="
 
           grep -n "mcp_list_tools\|mcp_call_tool" \
-            app/src/main/java/me/rerere/rikkahub/service/ChatService.kt \
-            || echo "[WARN] mcp lazy tools not in ChatService"
+            app/src/main/java/me/rerere/rikkahub/data/ai/tools/ChatToolFactory.kt \
+            || echo "[WARN] mcp lazy tools not in ChatToolFactory"
 
       - name: Check Existing Release
         if: steps.check_build.outputs.should_build == 'true'
@@ -817,7 +856,7 @@ jobs:
 
           {
             echo "body<<EOF"
-            echo "同步构建 \`${VER}\`"
+            echo "同步构建 \`${VER}\`（已签名）"
             echo ""
             if [ -n "$BODY" ]; then
               echo "### 上游更新说明"
