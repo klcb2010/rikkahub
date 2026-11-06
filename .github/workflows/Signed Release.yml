@@ -507,40 +507,21 @@ jobs:
                           "[WARN] RikkaHubApp onCreate marker not found"
                       )
 
-          for p in Path("app/src/main/java").rglob("*.kt"):
-              text = p.read_text(encoding="utf-8")
-
-              if "DEFAULT_ASSISTANTS_IDS" in text:
-                  new_text = re.sub(
-                      r'assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS',
-                      'true',
-                      text
-                  )
-
-                  if new_text != text:
-                      p.write_text(
-                          new_text,
-                          encoding="utf-8"
-                      )
-
-                      print(
-                          f"[OK] Assistant delete restriction patched: {p}"
-                      )
-
-          pref = Path(
-              "app/src/main/java/me/rerere/rikkahub/"
-              "data/datastore/PreferencesStore.kt"
+          # Keep exactly one built-in assistant. Upstream moved this list
+          # from PreferencesStore.kt to DefaultSettings.kt.
+          defaults = Path(
+              "app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultSettings.kt"
           )
 
-          if pref.exists():
-              text = pref.read_text(encoding="utf-8")
+          if not defaults.exists():
+              raise SystemExit(f"[FAIL] Missing assistant defaults file: {defaults}")
 
-              pattern = (
-                  r'internal val DEFAULT_ASSISTANTS = listOf\('
-                  r'[\s\S]*?\n\)'
-              )
-
-              replacement = """internal val DEFAULT_ASSISTANTS = listOf(
+          text = defaults.read_text(encoding="utf-8")
+          pattern = re.compile(
+              r"internal val DEFAULT_ASSISTANTS = listOf\\([\\s\\S]*?^\\)",
+              re.MULTILINE
+          )
+          replacement = """internal val DEFAULT_ASSISTANTS = listOf(
               Assistant(
                   id = DEFAULT_ASSISTANT_ID,
                   name = "",
@@ -548,23 +529,36 @@ jobs:
               )
           )"""
 
-              if re.search(pattern, text):
-                  text = re.sub(
-                      pattern,
-                      replacement,
-                      text,
-                      count=1
-                  )
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(
+                  "[FAIL] DEFAULT_ASSISTANTS block not found or changed in DefaultSettings.kt"
+              )
+          defaults.write_text(text, encoding="utf-8")
+          if text.count("internal val DEFAULT_ASSISTANTS = listOf(") != 1:
+              raise SystemExit("[FAIL] DEFAULT_ASSISTANTS verification failed")
+          print("[OK] DEFAULT_ASSISTANTS reduced to one assistant")
 
-                  pref.write_text(
-                      text,
-                      encoding="utf-8"
-                  )
+          # Allow deleting every assistant, including built-in defaults.
+          assistant_page = Path(
+              "app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/AssistantPage.kt"
+          )
+          if not assistant_page.exists():
+              raise SystemExit(f"[FAIL] Missing assistant page: {assistant_page}")
 
-                  print(
-                      "[OK] DEFAULT_ASSISTANTS reduced to one assistant"
-                  )
-
+          text = assistant_page.read_text(encoding="utf-8")
+          delete_pattern = re.compile(
+              r"enabled\\s*=\\s*assistant\\.id\\s*!in\\s*DEFAULT_ASSISTANTS_IDS"
+          )
+          text, count = delete_pattern.subn("enabled = true", text, count=1)
+          if count != 1:
+              raise SystemExit(
+                  "[FAIL] Assistant delete restriction not found or changed in AssistantPage.kt"
+              )
+          assistant_page.write_text(text, encoding="utf-8")
+          if "enabled = true" not in text:
+              raise SystemExit("[FAIL] Assistant delete permission verification failed")
+          print("[OK] Deleting any assistant is enabled")
           PYEOF
 
           touch app/proguard-rules.pro
