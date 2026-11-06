@@ -23,23 +23,33 @@ if path.name != "ChatToolFactory.kt":
     print(f"[FAIL] unsupported target {path}; tools moved to ChatToolFactory.kt")
     sys.exit(1)
 
-old_imp = "import kotlinx.serialization.json.Json\nimport kotlinx.serialization.json.jsonObject\nimport me.rerere.ai.core.Tool"
-new_imp = """import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
-import me.rerere.ai.core.InputSchema
-import me.rerere.ai.core.Tool
-import me.rerere.ai.ui.UIMessagePart"""
+required_imports = [
+    "import kotlinx.serialization.json.JsonObject",
+    "import kotlinx.serialization.json.buildJsonObject",
+    "import kotlinx.serialization.json.contentOrNull",
+    "import kotlinx.serialization.json.jsonPrimitive",
+    "import kotlinx.serialization.json.put",
+    "import kotlinx.serialization.json.putJsonObject",
+    "import me.rerere.ai.core.InputSchema",
+    "import me.rerere.ai.ui.UIMessagePart",
+]
 
-if old_imp not in text:
-    print("[FAIL] ChatToolFactory import marker not found (upstream changed)")
+# Upstream reorganizes imports frequently; add only missing imports instead
+# of depending on one exact contiguous import marker.
+lines = text.splitlines(keepends=True)
+last_import = max(
+    (i for i, line in enumerate(lines) if line.startswith("import ")),
+    default=-1,
+)
+if last_import < 0:
+    print("[FAIL] no import section found in ChatToolFactory")
     sys.exit(1)
-text = text.replace(old_imp, new_imp, 1)
+
+existing_imports = {line.strip() for line in lines if line.startswith("import ")}
+missing_imports = [item for item in required_imports if item not in existing_imports]
+if missing_imports:
+    lines[last_import + 1:last_import + 1] = [item + "\\n" for item in missing_imports]
+    text = "".join(lines)
 
 old = """        val mcpTools = mcpManager.getAllAvailableTools()
         val invalidNames = mcpTools
@@ -169,12 +179,23 @@ new = r"""        val mcpTools = mcpManager.getAllAvailableTools()
         }
 """
 
-if old not in text:
+# The upstream API now accepts the assistant as an argument. Keep
+# compatibility with both signatures while matching the surrounding block.
+old_candidates = [
+    old,
+    old.replace(
+        "mcpManager.getAllAvailableTools()",
+        "mcpManager.getAllAvailableTools(assistant)",
+    ),
+]
+matched_old = next((candidate for candidate in old_candidates if candidate in text), None)
+
+if matched_old is None:
     print("[FAIL] MCP tools block not found in ChatToolFactory (upstream changed)")
     idx = text.find("getAllAvailableTools")
-    print("context:", repr(text[idx:idx + 400] if idx >= 0 else "none"))
+    print("context:", repr(text[idx:idx + 500] if idx >= 0 else "none"))
     sys.exit(1)
 
-text = text.replace(old, new, 1)
+text = text.replace(matched_old, new, 1)
 path.write_text(text, encoding="utf-8")
 print(f"[OK] MCP lazy tools injected into {path}")
