@@ -211,9 +211,9 @@ if "getAllAvailableTools(assistant)" in matched_old:
 
 # Preserve the source block's nesting level after matching the deeper variant.
 if matched_old in old_candidates[len(old_variants):]:
-    new = "\\n".join(
+    new = "\n".join(
         ("    " + line) if line else line
-        for line in new.split("\\n")
+        for line in new.split("\n")
     )
 
 text = text.replace(matched_old, new, 1)
