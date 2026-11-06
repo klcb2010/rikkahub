@@ -518,7 +518,7 @@ jobs:
 
           text = defaults.read_text(encoding="utf-8")
           pattern = re.compile(
-              r"internal val DEFAULT_ASSISTANTS = listOf\\([\\s\\S]*?^\\)",
+              r"internal val DEFAULT_ASSISTANTS = listOf\([\s\S]*?^\)",
               re.MULTILINE
           )
           replacement = """internal val DEFAULT_ASSISTANTS = listOf(
@@ -548,7 +548,7 @@ jobs:
 
           text = assistant_page.read_text(encoding="utf-8")
           delete_pattern = re.compile(
-              r"enabled\\s*=\\s*assistant\\.id\\s*!in\\s*DEFAULT_ASSISTANTS_IDS"
+              r"enabled\s*=\s*assistant\.id\s*!in\s*DEFAULT_ASSISTANTS_IDS"
           )
           text, count = delete_pattern.subn("enabled = true", text, count=1)
           if count != 1:
