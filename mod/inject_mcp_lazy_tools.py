@@ -203,6 +203,19 @@ if matched_old is None:
     print("context:", repr(text[idx:idx + 500] if idx >= 0 else "none"))
     sys.exit(1)
 
+if "getAllAvailableTools(assistant)" in matched_old:
+    new = new.replace(
+        "mcpManager.getAllAvailableTools()",
+        "mcpManager.getAllAvailableTools(assistant)",
+    )
+
+# Preserve the source block's nesting level after matching the deeper variant.
+if matched_old in old_candidates[len(old_variants):]:
+    new = "\\n".join(
+        ("    " + line) if line else line
+        for line in new.split("\\n")
+    )
+
 text = text.replace(matched_old, new, 1)
 path.write_text(text, encoding="utf-8")
 print(f"[OK] MCP lazy tools injected into {path}")
