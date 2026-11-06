@@ -193,7 +193,7 @@ old_variants = [
 old_candidates = old_variants + [
     "\n".join(
         ("    " + line) if line else line
-        for line in candidate.rstrip("\\n").splitlines()
+        for line in candidate.rstrip("\n").splitlines()
     ) + "\n"
     for candidate in old_variants
 ]
