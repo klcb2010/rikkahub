@@ -118,13 +118,34 @@ jobs:
           git rev-parse --verify "$UPSTREAM_BRANCH" >/dev/null 2>&1 || \
             UPSTREAM_BRANCH="upstream/main"
 
-          git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours
+          if ! git merge "$UPSTREAM_BRANCH" --no-commit --no-ff -X ours; then
+            echo "=== Checking merge conflicts ==="
+
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+
+            # daily-build.yml is intentionally absent from the local fork.
+            # Upstream may modify it, which creates a modify/delete conflict.
+            # Preserve the local deletion; fail on every other conflict.
+            if [ "$CONFLICTS" = ".github/workflows/daily-build.yml" ] && \
+               [ ! -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ]; then
+              git rm -f -- .github/workflows/daily-build.yml
+            else
+              echo "ERROR: unexpected merge conflicts:"
+              printf '%s\\n' "$CONFLICTS"
+              exit 1
+            fi
+          fi
 
           echo "=== Restoring protected files ==="
 
-          [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ] && \
+          if [ -f "/tmp/protected_backup/.github/workflows/daily-build.yml" ]; then
             cp /tmp/protected_backup/.github/workflows/daily-build.yml \
-            .github/workflows/daily-build.yml || true
+              .github/workflows/daily-build.yml
+          else
+            # Keep the intentional local deletion even if upstream adds the file.
+            rm -f .github/workflows/daily-build.yml
+            git rm -f --cached --ignore-unmatch .github/workflows/daily-build.yml || true
+          fi
 
           [ -f "/tmp/protected_backup/README.md" ] && \
             cp /tmp/protected_backup/README.md README.md || true
