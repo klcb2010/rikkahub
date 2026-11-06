@@ -48,7 +48,7 @@ if last_import < 0:
 existing_imports = {line.strip() for line in lines if line.startswith("import ")}
 missing_imports = [item for item in required_imports if item not in existing_imports]
 if missing_imports:
-    lines[last_import + 1:last_import + 1] = [item + "\\n" for item in missing_imports]
+    lines[last_import + 1:last_import + 1] = [item + "\n" for item in missing_imports]
     text = "".join(lines)
 
 old = """        val mcpTools = mcpManager.getAllAvailableTools()
@@ -181,12 +181,19 @@ new = r"""        val mcpTools = mcpManager.getAllAvailableTools()
 
 # The upstream API now accepts the assistant as an argument. Keep
 # compatibility with both signatures while matching the surrounding block.
-old_candidates = [
+old_variants = [
     old,
     old.replace(
         "mcpManager.getAllAvailableTools()",
         "mcpManager.getAllAvailableTools(assistant)",
     ),
+]
+
+# ChatToolFactory moved the same block one nesting level deeper upstream.
+old_candidates = old_variants + [
+    "\\n".join(("    " + line) if line else line for line in candidate.split("\\n"))
+    + "\\n"
+    for candidate in old_variants
 ]
 matched_old = next((candidate for candidate in old_candidates if candidate in text), None)
 
