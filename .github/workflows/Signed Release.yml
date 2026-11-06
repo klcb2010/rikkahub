@@ -17,7 +17,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
+          # Do not initialize submodules here: upstream may convert a submodule into regular source files.
+          submodules: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git Identity
