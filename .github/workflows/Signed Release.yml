@@ -272,6 +272,10 @@ jobs:
           sed -i '/alias(libs\.plugins\.baselineprofile)/d' \
             build.gradle.kts || true
 
+          # The plugin is removed above, so its DSL block must also be removed.
+          sed -i '/^baselineProfile[[:space:]]*{/,/^}/d' \
+            app/build.gradle.kts
+
           sed -i '/alias(libs\.plugins\.android\.test)/d' \
             build.gradle.kts || true
 
