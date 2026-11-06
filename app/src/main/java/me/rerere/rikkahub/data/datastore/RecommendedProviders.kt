@@ -16,27 +16,20 @@ import kotlin.uuid.Uuid
  */
 val RECOMMENDED_PROVIDERS: List<ProviderSetting> = listOf(
     ProviderSetting.OpenAI(
-        id = Uuid.parse("1b1395ed-b702-4aeb-8bc1-b681c4456953"),
-        name = "AiHubMix",
-        baseUrl = "https://aihubmix.com/v1",
+        id = Uuid.parse("3de58b04-7ac6-4f25-8880-2e2638aeb1d6"),
+        name = "STA1N API🍪",
+        baseUrl = "https://sta1n.ai/v1",
         apiKey = "",
         enabled = true,
         description = {
             Text(
                 text = buildAnnotatedString {
-                    append("提供 OpenAI、Claude、Google Gemini 等主流模型的高并发和稳定服务")
+                    append("主营 RP 的站")
                     appendLine()
                     append("官网：")
-                    withLink(LinkAnnotation.Url("https://aihubmix.com?aff=pG7r")) {
+                    withLink(LinkAnnotation.Url("https://sta1n.ai")) {
                         withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
-                            append("https://aihubmix.com")
-                        }
-                    }
-                    appendLine()
-                    append("充值: ")
-                    withLink(LinkAnnotation.Url("https://console.aihubmix.com/topup")) {
-                        withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
-                            append("https://console.aihubmix.com/topup")
+                            append("https://sta1n.ai")
                         }
                     }
                 }
@@ -110,5 +103,33 @@ val RECOMMENDED_PROVIDERS: List<ProviderSetting> = listOf(
             )
         },
         useResponseApi = true,
+    ),
+    ProviderSetting.OpenAI(
+        id = Uuid.parse("228e2443-f3bb-4222-970c-2c800aff514d"),
+        name = "钠API",
+        baseUrl = "https://naapi.cc/v1",
+        apiKey = "",
+        enabled = true,
+        description = {
+            Text(
+                text = buildAnnotatedString {
+                    append("钠API（naapi.cc）是 OpenAI 兼容的 LLM 网关，以优惠价格提供 OpenAI、Anthropic、Google 等 300+ 模型访问")
+                    appendLine()
+                    append("官网：")
+                    withLink(LinkAnnotation.Url("https://naapi.cc/register?aff=rikkahub")) {
+                        withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
+                            append("https://naapi.cc")
+                        }
+                    }
+                    appendLine()
+                    append("充值：")
+                    withLink(LinkAnnotation.Url("https://naapi.cc/console/topup")) {
+                        withStyle(SpanStyle(MaterialTheme.colorScheme.primary)) {
+                            append("https://naapi.cc/console/topup")
+                        }
+                    }
+                }
+            )
+        },
     ),
 )

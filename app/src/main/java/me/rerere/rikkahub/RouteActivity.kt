@@ -1,6 +1,7 @@
 package me.rerere.rikkahub
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -40,6 +41,7 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
@@ -54,14 +56,17 @@ import coil3.network.cachecontrol.CacheControlCacheStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import coil3.svg.SvgDecoder
-import com.dokar.sonner.Toaster
-import com.dokar.sonner.rememberToasterState
+import me.rerere.ui.toast.Toaster
+import me.rerere.ui.toast.rememberToasterState
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.db.DatabaseMigrationTracker
 import me.rerere.rikkahub.data.db.MigrationState
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.repository.MediaCreationRepository
+import me.rerere.rikkahub.service.MediaCreationForegroundService
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
 import me.rerere.rikkahub.ui.components.ui.TTSController
 import me.rerere.rikkahub.ui.context.LocalASRState
@@ -91,16 +96,20 @@ import me.rerere.rikkahub.ui.pages.extensions.ExtensionsPage
 import me.rerere.rikkahub.ui.pages.extensions.PromptPage
 import me.rerere.rikkahub.ui.pages.extensions.QuickMessagesPage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillDetailPage
+import me.rerere.rikkahub.ui.pages.memory.MemoryFilePage
 import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceFileEditorPage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceSshEditorPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
 import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
 import me.rerere.rikkahub.ui.pages.history.HistoryPage
 import me.rerere.rikkahub.ui.pages.imggen.ImageGenPage
 import me.rerere.rikkahub.ui.pages.log.LogPage
+import me.rerere.rikkahub.ui.pages.mediacreation.MediaCreationPage
+import me.rerere.rikkahub.ui.pages.mediacreation.MediaCreationSessionsPage
 import me.rerere.rikkahub.ui.pages.search.SearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingAboutPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
@@ -112,6 +121,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesUIPage
 import me.rerere.rikkahub.ui.pages.setting.SettingThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingDonatePage
 import me.rerere.rikkahub.ui.pages.setting.SettingFilesPage
+import me.rerere.rikkahub.ui.pages.setting.SettingMcpDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMcpPage
 import me.rerere.rikkahub.ui.pages.setting.SettingModelPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPage
@@ -119,13 +129,14 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
+import me.rerere.rikkahub.ui.pages.setting.SettingMediaPage
+import me.rerere.rikkahub.ui.pages.setting.SettingMediaProviderDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
 import me.rerere.rikkahub.ui.pages.stats.StatsPage
 import me.rerere.rikkahub.ui.pages.translator.TranslatorPage
 import me.rerere.rikkahub.ui.pages.webview.WebViewPage
-import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.openUsageAccessSettings
@@ -136,11 +147,20 @@ import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
-private const val ACTION_IMAGE_GEN = "me.rerere.rikkahub.action.IMAGE_GEN"
+private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
+private const val EXTRA_CONVERSATION_ID = "conversationId"
+
+/** 打开指定会话的聊天页 */
+fun conversationIntent(context: Context, conversationId: String): Intent =
+    Intent(context, RouteActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        putExtra(EXTRA_CONVERSATION_ID, conversationId)
+    }
 
 class RouteActivity : ComponentActivity() {
     private val okHttpClient by inject<OkHttpClient>()
     private val settingsStore by inject<SettingsStore>()
+    private val mediaCreationRepository by inject<MediaCreationRepository>()
     private var navStack: MutableList<NavKey>? = null
     private val pendingIntents = ArrayDeque<Intent>()
 
@@ -218,7 +238,10 @@ class RouteActivity : ComponentActivity() {
         }
         val destination = when (intent.action) {
             ACTION_TRANSLATE -> Screen.Translator
-            ACTION_IMAGE_GEN -> Screen.ImageGen
+            ACTION_MEDIA_CREATION -> {
+                openNewMediaCreation(backStack)
+                null
+            }
             Intent.ACTION_SEND -> Screen.ShareHandler(
                 text = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty(),
                 streamUri = intent.getStringExtra(Intent.EXTRA_STREAM),
@@ -226,11 +249,26 @@ class RouteActivity : ComponentActivity() {
             Intent.ACTION_PROCESS_TEXT -> Screen.ShareHandler(
                 text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString().orEmpty(),
             )
-            else -> intent.getStringExtra("conversationId")?.let { Screen.Chat(it) }
+            else -> mediaCreationDestination(intent)
+                ?: intent.getStringExtra(EXTRA_CONVERSATION_ID)?.let { Screen.Chat(it) }
         }
         if (destination != null && backStack.lastOrNull() != destination) {
             backStack.add(destination)
         }
+    }
+
+    // 快捷方式没有指定会话，打开一个空会话
+    private fun openNewMediaCreation(backStack: MutableList<NavKey>) {
+        lifecycleScope.launch {
+            val destination = Screen.MediaCreation(mediaCreationRepository.newSession().id.toString())
+            if (backStack.lastOrNull() != destination) backStack.add(destination)
+        }
+    }
+
+    // 媒体创作的通知带着会话 ID，点击后直接打开那个会话
+    private fun mediaCreationDestination(intent: Intent): Screen? {
+        val sessionId = intent.getStringExtra(MediaCreationForegroundService.EXTRA_MEDIA_SESSION_ID) ?: return null
+        return runCatching { Uuid.parse(sessionId) }.getOrNull()?.let { Screen.MediaCreation(it.toString()) }
     }
 
     @OptIn(ExperimentalComposeUiApi::class)
@@ -281,13 +319,6 @@ class RouteActivity : ComponentActivity() {
                 LocalTTSState provides tts,
                 LocalASRState provides asr,
             ) {
-                Toaster(
-                    state = toastState,
-                    darkTheme = LocalDarkMode.current,
-                    richColors = true,
-                    alignment = Alignment.TopCenter,
-                    showCloseButton = true,
-                )
                 TTSController()
                 Box(
                     modifier = Modifier
@@ -302,7 +333,8 @@ class RouteActivity : ComponentActivity() {
                             rememberViewModelStoreNavEntryDecorator(),
                         ),
                         modifier = Modifier.fillMaxSize(),
-                        onBack = { backStack.removeLastOrNull() },
+                        // 同一帧内连续两次返回时 NavDisplay 的返回状态还没更新，会多回调一次，不加判断会把栈弹空
+                        onBack = { if (backStack.size > 1) backStack.removeLastOrNull() },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
                             else {
@@ -366,6 +398,10 @@ class RouteActivity : ComponentActivity() {
                                 AssistantMemoryPage(key.id)
                             }
 
+                            entry<Screen.MemoryFile> { key ->
+                                MemoryFilePage(memoryId = key.memoryId, path = key.path)
+                            }
+
                             entry<Screen.AssistantRequest> { key ->
                                 AssistantRequestPage(key.id)
                             }
@@ -396,6 +432,19 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.ImageGen> {
                                 ImageGenPage()
+                            }
+
+                            entry<Screen.MediaCreationSessions> {
+                                MediaCreationSessionsPage()
+                            }
+
+                            // 从会话列表展开（容器变换），页面本身只做淡入淡出，避免和平移打架
+                            entry<Screen.MediaCreation>(
+                                metadata = NavDisplay.transitionSpec { fadeIn() togetherWith fadeOut() }
+                                    + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
+                                    + NavDisplay.predictivePopTransitionSpec { fadeIn() togetherWith fadeOut() }
+                            ) { key ->
+                                MediaCreationPage(key.id)
                             }
 
                             entry<Screen.WebView> { key ->
@@ -460,8 +509,20 @@ class RouteActivity : ComponentActivity() {
                                 SettingSpeechPage()
                             }
 
+                            entry<Screen.SettingMedia> {
+                                SettingMediaPage()
+                            }
+
+                            entry<Screen.SettingMediaProviderDetail> { key ->
+                                SettingMediaProviderDetailPage(id = Uuid.parse(key.providerId))
+                            }
+
                             entry<Screen.SettingMcp> {
                                 SettingMcpPage()
+                            }
+
+                            entry<Screen.SettingMcpDetail> { key ->
+                                SettingMcpDetailPage(id = Uuid.parse(key.serverId))
                             }
 
                             entry<Screen.SettingDonate> {
@@ -510,6 +571,10 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.WorkspaceTerminal> { key ->
                                 WorkspaceTerminalPage(key.id)
+                            }
+
+                            entry<Screen.WorkspaceSshEditor> { key ->
+                                WorkspaceSshEditorPage(key.id)
                             }
 
                             entry<Screen.WorkspaceFileEditor> { key ->
@@ -575,6 +640,10 @@ class RouteActivity : ComponentActivity() {
                             }
                         }
                     }
+                    Toaster(
+                        state = toastState,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
                 }
             }
         }
@@ -614,6 +683,10 @@ sealed interface Screen : NavKey {
     @Serializable
     data class AssistantMemory(val id: String) : Screen
 
+    /** 记忆库 [memoryId] 里的一个文件，[path] 为 null 时新建 */
+    @Serializable
+    data class MemoryFile(val memoryId: String, val path: String? = null) : Screen
+
     @Serializable
     data class AssistantRequest(val id: String) : Screen
 
@@ -637,6 +710,12 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object ImageGen : Screen
+
+    @Serializable
+    data object MediaCreationSessions : Screen
+
+    @Serializable
+    data class MediaCreation(val id: String) : Screen
 
     @Serializable
     data class WebView(val url: String = "", val contentId: String = "") : Screen
@@ -684,7 +763,16 @@ sealed interface Screen : NavKey {
     data object SettingSpeech : Screen
 
     @Serializable
+    data object SettingMedia : Screen
+
+    @Serializable
+    data class SettingMediaProviderDetail(val providerId: String) : Screen
+
+    @Serializable
     data object SettingMcp : Screen
+
+    @Serializable
+    data class SettingMcpDetail(val serverId: String) : Screen
 
     @Serializable
     data object SettingDonate : Screen
@@ -721,6 +809,10 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class WorkspaceTerminal(val id: String) : Screen
+
+    /** [id] 为 null 时新建 */
+    @Serializable
+    data class WorkspaceSshEditor(val id: String? = null) : Screen
 
     @Serializable
     data class WorkspaceFileEditor(val id: String, val area: String, val path: String) : Screen
