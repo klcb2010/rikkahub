@@ -191,8 +191,8 @@ old_variants = [
 
 # ChatToolFactory moved the same block one nesting level deeper upstream.
 old_candidates = old_variants + [
-    "\\n".join(("    " + line) if line else line for line in candidate.split("\\n"))
-    + "\\n"
+    "\n".join(("    " + line) if line else line for line in candidate.split("\n"))
+    + "\n"
     for candidate in old_variants
 ]
 matched_old = next((candidate for candidate in old_candidates if candidate in text), None)
