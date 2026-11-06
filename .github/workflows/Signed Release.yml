@@ -815,11 +815,18 @@ jobs:
       - name: Verify APK is signed
         if: steps.check_build.outputs.should_build == 'true' && steps.release_check.outputs.should_release == 'true'
         run: |
-          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          APK=$(find app/build/outputs/apk/github/release -maxdepth 1 -type f -name '*.apk' | sort | head -1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: GitHub release APK not found."
+            echo "Available APK outputs:"
+            find app/build/outputs/apk -type f -name '*.apk' -print || true
+            exit 1
+          fi
 
           echo "APK: $APK"
 
-          ls -la app/build/outputs/apk/release/
+          ls -la app/build/outputs/apk/github/release/
 
           if [ -d "$ANDROID_HOME/build-tools" ]; then
 
@@ -904,4 +911,4 @@ jobs:
           prerelease: false
           body: ${{ steps.notes.outputs.body }}
           files: |
-            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/github/release/*.apk
