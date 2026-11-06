@@ -1,7 +1,7 @@
 diff --git a/ai/src/main/java/me/rerere/ai/agent/AgentLoop.kt b/ai/src/main/java/me/rerere/ai/agent/AgentLoop.kt
 --- a/ai/src/main/java/me/rerere/ai/agent/AgentLoop.kt
 +++ b/ai/src/main/java/me/rerere/ai/agent/AgentLoop.kt
-@@ -34,10 +34,18 @@ internal class AgentLoop(
+@@ -34,11 +34,18 @@ internal class AgentLoop(
  
      init {
          val last = request.messages.lastOrNull()
